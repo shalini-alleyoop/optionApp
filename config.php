@@ -2,8 +2,8 @@
 define('APP_URL', 'https://apps.royalhawaiianheritage.com');
 define('SESSION_NAME', 'shopify_app_sess');
 define('SHOPIFY_ALLOWED_SHOP', 'qheqg4-bu.myshopify.com');
-define('SHOPIFY_API_KEY',    'db441210fdaf92721bdd8a3fd4a3d554');
-define('SHOPIFY_API_SECRET', '5d62ff5296488abc3b98f8ff6b9e3094');
+define('SHOPIFY_API_KEY',    'XXX');
+define('SHOPIFY_API_SECRET', 'XXX');
 define('SHOPIFY_API_VERSION', '2025-04');
 define('SHOPIFY_SCOPES', implode(',', [
     'read_products','write_products',
