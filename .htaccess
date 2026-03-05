@@ -1,0 +1,3 @@
+<FilesMatch "\.js$">
+  Header set Cache-Control "no-cache, must-revalidate"
+</FilesMatch>
