@@ -13,7 +13,8 @@ class Admin extends DB
     {
         $shop = $row['shop_domain'];
         $accessToken = $row['access_token'];
-        $endpoint = "https://$shop/admin/api/2025-04/graphql.json";
+        $endpoint = "https://$shop/admin/api/" . SHOPIFY_API_VERSION . "/graphql.json";
+        // As of 2025-07, count fields cap at 10,000 unless limit is set to null
         $query = <<<GRAPHQL
                 query {
                     productsCount(limit: null) {
@@ -52,7 +53,7 @@ class Admin extends DB
     {
         $shop = $row['shop_domain'];
         $accessToken = $row['access_token'];
-        $endpoint = "https://$shop/admin/api/2025-04/graphql.json";
+        $endpoint = "https://$shop/admin/api/" . SHOPIFY_API_VERSION . "/graphql.json";
 
         $first = 50;
         $afterCursor = null;
@@ -204,7 +205,7 @@ class Admin extends DB
         $row = $this->get_row("SELECT * FROM bg_options WHERE option_id='$optionId'");
 
         if ($row) {
-            $optionValues = $this->get_results("SELECT * FROM bg_option_values WHERE option_id='$optionId' and status  = '1' ");
+            $optionValues = $this->get_results("SELECT * FROM bg_option_values WHERE option_id='$optionId' AND status='1' ORDER BY sort_order ASC");
             echo json_encode([
                 "success" => true,
                 "data" => [
@@ -229,7 +230,7 @@ class Admin extends DB
             $selected_options = explode(',', $selectedoptionids);
         }
         if ($row) {
-            $optionValues = $this->get_results("SELECT * FROM bg_option_values WHERE option_id='$optionId' and status  = '1' ");
+            $optionValues = $this->get_results("SELECT * FROM bg_option_values WHERE option_id='$optionId' AND status='1' ORDER BY sort_order ASC");
             $i = 0;
             foreach ($optionValues as $option) {
                 if (in_array($option['option_value_id'], $selected_options)) {
@@ -243,7 +244,8 @@ class Admin extends DB
                 "success" => true,
                 "data" => [
                     "option" => $row,
-                    "values" => $optionValues
+                    "values" => $optionValues,
+					"required" => $prow['required']
                 ]
             ]);
         } else {
@@ -252,11 +254,12 @@ class Admin extends DB
     }
 
     function update_product_selected_option()
-    {
+    {		
+        $is_required = !empty($_POST["is_required"]) ? 1 : 0;
         $optionId = (int)$_POST['option_id'];
         $productId = (int)$_POST['product_id'];
         $option_values = !empty($_POST['option_values']) ? implode(',', $_POST['option_values']) : '';
-        $prow = $this->query("UPDATE bg_product_options SET options_values = '" . $option_values . "' WHERE product_id='$productId' AND option_id = '$optionId' ");
+        $prow = $this->query("UPDATE bg_product_options SET options_values = '" . $option_values . "', required = '$is_required' WHERE product_id='$productId' AND option_id = '$optionId' ");
 
         echo json_encode(["success" => true]);
     }
@@ -265,14 +268,16 @@ class Admin extends DB
     {
         $option_id = $_POST["option_id"];
         $option_name = $_POST["option_name"];
+        $front_label = $_POST["front_label"] ?? '';
         if (isset($_POST['engraving'])) {
             $this->query("Update bg_options SET `engraving` = 'Yes' WHERE option_id='$option_id'");
         } else {
             $this->query("Update bg_options SET `engraving` = 'No' WHERE option_id='$option_id'");
         }
-        $this->query("Update bg_options SET `display_name` = '{$option_name}' WHERE option_id='$option_id'");
+        $this->query("Update bg_options SET `display_name` = '{$option_name}', `front_label` = '{$front_label}' WHERE option_id='$option_id'");
         $this->query("Update bg_option_values SET `status` = '0' WHERE option_id='$option_id'");
         $sort_order = 0;
+        $newValueIds = [];
         if (!empty($_POST['existingvalues'])) {
             foreach ($_POST['existingvalues'] as $option_value_id => $label) {
                 $filepath = '';
@@ -295,7 +300,11 @@ class Admin extends DB
                         }
                     }
                 }
-                $this->query("Update bg_option_values SET `status` = '1',`label` = '$label',`value` = '$label', `sort_order` = '$sort_order' WHERE option_id='$option_id' AND option_value_id = '$option_value_id'");
+                $price = isset($_POST['existingprices'][$option_value_id]) && $_POST['existingprices'][$option_value_id] !== '' ? floatval($_POST['existingprices'][$option_value_id]) : 'NULL';
+                $price_sql = ($price === 'NULL') ? "NULL" : $price;
+                $price_type = in_array($_POST['existingpricetypes'][$option_value_id] ?? '', ['relative', 'percentage']) ? $_POST['existingpricetypes'][$option_value_id] : 'relative';
+                $price_adjust = ($_POST['existingpriceadjust'][$option_value_id] ?? '') === 'remove' ? 'remove' : 'add';
+                $this->query("Update bg_option_values SET `status` = '1',`label` = '$label',`value` = '$label', `sort_order` = '$sort_order', `price` = $price_sql, `price_type` = '$price_type', `price_adjust` = '$price_adjust' WHERE option_id='$option_id' AND option_value_id = '$option_value_id'");
                 $sort_order++;
             }
         }
@@ -321,10 +330,65 @@ class Admin extends DB
                         }
                     }
                 }
-                $this->query("INSERT INTO bg_option_values SET `status` = '1',`label` = '$label',`value` = '$label', `option_id`='$option_id', `image` = '$filepath', `sort_order` = '$sort_order' ");
+                $price = isset($_POST['newprices'][$key]) && $_POST['newprices'][$key] !== '' ? floatval($_POST['newprices'][$key]) : 'NULL';
+                $price_sql = ($price === 'NULL') ? "NULL" : $price;
+                $price_type = in_array($_POST['newpricetypes'][$key] ?? '', ['relative', 'percentage']) ? $_POST['newpricetypes'][$key] : 'relative';
+                $price_adjust = ($_POST['newpriceadjust'][$key] ?? '') === 'remove' ? 'remove' : 'add';
+                $this->query("INSERT INTO bg_option_values SET `status` = '1',`label` = '$label',`value` = '$label', `option_id`='$option_id', `image` = '$filepath', `price` = $price_sql, `price_type` = '$price_type', `price_adjust` = '$price_adjust', `sort_order` = '$sort_order', `is_default` = '0' ");
+                $lid = $this->get_row("SELECT LAST_INSERT_ID() AS id");
+                if (!empty($lid['id'])) {
+                    $newValueIds[(int)$key] = (int)$lid['id'];
+                }
                 $sort_order++;
             }
         }
+
+        $option_id_int = (int)$option_id;
+        $optTypeRow = $this->get_row("SELECT `type` FROM bg_options WHERE option_id='" . $option_id_int . "' LIMIT 1");
+        $optType = $optTypeRow['type'] ?? '';
+        if ($optType === 'RT' || $optType === 'S') {
+            $this->query("UPDATE bg_option_values SET is_default = '0' WHERE option_id='" . $option_id_int . "' AND status = '1'");
+            $defaultRaw = isset($_POST['default_value_id']) ? trim((string)$_POST['default_value_id']) : '';
+            $targetId = null;
+            if ($defaultRaw !== '') {
+                if (preg_match('/^new_(\d+)$/', $defaultRaw, $mm)) {
+                    $slot = (int)$mm[1];
+                    if (isset($newValueIds[$slot])) {
+                        $targetId = $newValueIds[$slot];
+                    }
+                } else {
+                    $candidate = (int)$defaultRaw;
+                    if ($candidate > 0) {
+                        $chk = $this->get_row("SELECT option_value_id FROM bg_option_values WHERE option_value_id='" . $candidate . "' AND option_id='" . $option_id_int . "' AND status = '1' LIMIT 1");
+                        if (!empty($chk)) {
+                            $targetId = $candidate;
+                        }
+                    }
+                }
+            }
+            if ($targetId) {
+                $this->query("UPDATE bg_option_values SET is_default = '1' WHERE option_value_id='" . (int)$targetId . "' AND option_id='" . $option_id_int . "' LIMIT 1");
+            } else {
+                $first = $this->get_row("SELECT option_value_id FROM bg_option_values WHERE option_id='" . $option_id_int . "' AND status = '1' ORDER BY sort_order ASC, option_value_id ASC LIMIT 1");
+                if (!empty($first['option_value_id'])) {
+                    $this->query("UPDATE bg_option_values SET is_default = '1' WHERE option_value_id='" . (int)$first['option_value_id'] . "' LIMIT 1");
+                }
+            }
+        }
+
+        // Remove deactivated value IDs from bg_product_options.options_values
+        $deletedValues = $this->get_results("SELECT option_value_id FROM bg_option_values WHERE option_id='$option_id' AND status='0'");
+        if (!empty($deletedValues)) {
+            $deletedIds = array_column($deletedValues, 'option_value_id');
+            $productOptions = $this->get_results("SELECT product_option_id, options_values FROM bg_product_options WHERE option_id='$option_id' AND options_values != ''");
+            foreach ($productOptions as $po) {
+                $current = array_filter(explode(',', $po['options_values']), fn($v) => $v !== '');
+                $updated = array_values(array_diff($current, $deletedIds));
+                $newValues = implode(',', $updated);
+                $this->query("UPDATE bg_product_options SET options_values='" . $newValues . "' WHERE product_option_id='" . $po['product_option_id'] . "'");
+            }
+        }
+
         echo json_encode([
             "success" => true
         ]);
@@ -347,6 +411,29 @@ class Admin extends DB
         echo json_encode([
             "success" => true
         ]);
+    }
+
+    /**
+     * Soft-delete an option (status = 0) only if it is not assigned to any product in bg_product_options.
+     */
+    function delete_option()
+    {
+        $option_id = (int)($_POST['option_id'] ?? 0);
+        if ($option_id <= 0) {
+            echo json_encode(['success' => false, 'msg' => 'Invalid option.']);
+            exit;
+        }
+        $assigned = $this->get_row("SELECT product_option_id FROM bg_product_options WHERE option_id='" . $option_id . "' LIMIT 1");
+        if (!empty($assigned)) {
+            echo json_encode([
+                'success' => false,
+                'msg' => 'This option is assigned to one or more products. Remove it from those products first, then you can delete it.',
+            ]);
+            exit;
+        }
+        $this->query("UPDATE bg_options SET `status` = '0' WHERE option_id='" . $option_id . "'");
+        echo json_encode(['success' => true]);
+        exit;
     }
 
     function get_options()
@@ -373,8 +460,9 @@ class Admin extends DB
                 if (is_array($options) && !empty($options)) {
                     $engraving = true;
                     foreach ($options as $option) {
-                        $main_option = $this->get_row("SELECT * FROM `bg_options` WHERE `option_id`='" . $option["option_id"] . "'");
+                        $main_option = $this->get_row("SELECT * FROM `bg_options` WHERE `option_id`='" . $option["option_id"] . "' ");
                         $display_name = $main_option["display_name"];
+                        $front_label = !empty($main_option["front_label"]) ? $main_option["front_label"] : $display_name;
                         $product_option_id = $option["product_option_id"];
                         $option_id = $main_option["option_id"];
                         $option_type = $main_option['type'];
@@ -383,18 +471,18 @@ class Admin extends DB
                         if ($option['required']) {
                             $option_required = "required";
                         }
-                        $name = $display_name;
+                        $name = $front_label;
 
                         $html .= "<div class='option-values-wp' style='margin-bottom:15px;'>";
-                        $html .= "<legend><strong>{$display_name}" . (!empty($option['required']) ? " <span style='color:red;'>*</span>" : "") . ":</strong></legend>";
+                        $html .= "<legend data-optionname=\"" . htmlspecialchars($name, ENT_QUOTES) . "\"><strong>{$front_label}" . (!empty($option['required']) ? " <span style='color:red;'>*</span>" : "") . ":</strong></legend>";
 
 
                         $selectedoptionids = $option['options_values'];
 
                         if (!empty($selectedoptionids)) {
-                            $optionValues = $this->get_results("SELECT * FROM `bg_option_values` WHERE `option_id`='" . $option_id . "' AND FIND_IN_SET(`option_value_id`, '$selectedoptionids') ORDER BY `sort_order` ASC");
+                            $optionValues = $this->get_results("SELECT * FROM `bg_option_values` WHERE `option_id`='" . $option_id . "' AND `status`='1' AND FIND_IN_SET(`option_value_id`, '$selectedoptionids') ORDER BY `sort_order` ASC");
                         } else {
-                            $optionValues = $this->get_results("SELECT * FROM `bg_option_values` WHERE `option_id`='" . $option_id . "' ORDER BY `sort_order` ASC");
+                            $optionValues = $this->get_results("SELECT * FROM `bg_option_values` WHERE `option_id`='" . $option_id . "' AND `status`='1' ORDER BY `sort_order` ASC");
                         }
 
                         if ($option_type === "RT") {
@@ -464,8 +552,8 @@ class Admin extends DB
 
                                 $html .= "  </div></div></div>";
                             }
-                        } elseif ($option["type"] === "T") {
-                            $html .= "<input $option_required type='text' data-productoptionid='$product_option_id' name='properties[{$name}]' placeholder='Enter $display_name'>";
+                        } elseif ($option_type === "T") {
+                            $html .= "<input $option_required type='text' data-productoptionid='$product_option_id' name='properties[{$name}]' placeholder='Enter $front_label'>";
                             if ($option_engraving == "Yes" && $engraving === true) {
                                 $html .= "<button type='button' class='engraving_preview_button'>Preview Engraving</button><span class='characters_remaining'></span>";
                                 $engraving = false;
@@ -509,18 +597,136 @@ class Admin extends DB
             $product_options = $_POST["product_options"];
             $prdprice = $_POST["product_price"];
 
-            $product_prices = $this->get_results("CALL GetMatchingRules('$product_id', '$product_options')");
+            $product_options_arr = json_decode($product_options, true) ?: [];
+            $selected_value_ids = array_map('intval', array_column($product_options_arr, 'option_value_id'));
+            $selected_set = array_flip($selected_value_ids);
 
+            // Load all enabled rules for this product and check which ones fully match
+            $all_rules = $this->get_results(
+                "SELECT * FROM bg_product_rules_extract
+                 WHERE product_id = $product_id
+                   AND (is_enabled = 1 OR is_enabled = 'true')
+                 ORDER BY sort_order ASC"
+            );
 
-            $product_price = $this->calculatePrice($product_prices, $prdprice);
+            // Parse each rule and check if it matches the selected values.
+            // Conditions from the same option_id are OR'd (user picks one value from that option).
+            // Conditions from different option_ids are AND'd (all option groups must match).
+            $matched_rules = [];   // rule_id → ['adjuster', 'adjuster_value', 'value_ids']
+            $vid_to_rules  = [];   // option_value_id → [rule_id, ...] (all matching rules)
+            foreach ($all_rules as $rule) {
+                $conditions = json_decode($rule['conditions_json'], true) ?: [];
+
+                // Group condition vids by option_id so same-option conditions are OR'd
+                $groups = [];
+                foreach ($conditions as $c) {
+                    if (empty($c['option_value_id'])) continue;
+                    $vid = intval($c['option_value_id']);
+                    $oid = !empty($c['option_id']) ? $c['option_id'] : ($c['product_option_id'] ?? 'na');
+                    $groups[$oid][] = $vid;
+                }
+
+                if (empty($groups)) continue;
+
+                // Rule matches when every option group has at least one selected value
+                $all_match   = true;
+                $matched_vids = [];  // the specific selected vid that satisfied each group
+                foreach ($groups as $oid => $vid_list) {
+                    $hit = null;
+                    foreach ($vid_list as $rvid) {
+                        if (isset($selected_set[$rvid])) { $hit = $rvid; break; }
+                    }
+                    if ($hit === null) { $all_match = false; break; }
+                    $matched_vids[] = $hit;
+                }
+                if (!$all_match) continue;
+
+                $rid = $rule['id'];
+                $matched_rules[$rid] = [
+                    'adjuster'       => $rule['adjuster'],
+                    'adjuster_value' => $rule['adjuster_value'],
+                    'value_ids'      => $matched_vids,
+                ];
+                foreach ($matched_vids as $rvid) {
+                    $vid_to_rules[$rvid][] = $rid;  // collect ALL rules per vid
+                }
+            }
+
+            // Fetch option_value prices and their option sort_order in one query
+            $ordered_prices = [];
+            if (!empty($selected_value_ids)) {
+                $ids_str      = implode(',', $selected_value_ids);
+                $ordered_opts = $this->get_results(
+                    "SELECT po.sort_order, ov.option_value_id, ov.price, ov.price_type, ov.price_adjust
+                     FROM bg_product_options po
+                     JOIN bg_option_values ov ON po.option_id = ov.option_id
+                     WHERE po.product_id = $product_id
+                       AND ov.option_value_id IN ($ids_str)
+                     ORDER BY po.sort_order ASC"
+                );
+
+                $used_rules     = [];
+                $processed_vids = [];
+                foreach ($ordered_opts as $opt) {
+                    $vid = intval($opt['option_value_id']);
+                    // Skip duplicate option_value_id rows (can occur if same option_id
+                    // appears more than once in bg_product_options for this product)
+                    if (isset($processed_vids[$vid])) continue;
+                    $processed_vids[$vid] = true;
+
+                    if (isset($vid_to_rules[$vid])) {
+                        // Apply ALL matching product-level rules first
+                        foreach ($vid_to_rules[$vid] as $rid) {
+                            if (!isset($used_rules[$rid])) {
+                                $used_rules[$rid] = true;
+                                $ordered_prices[] = [
+                                    'adjuster'       => $matched_rules[$rid]['adjuster'],
+                                    'adjuster_value' => $matched_rules[$rid]['adjuster_value'],
+                                    '_source'        => 'rule:' . $rid . ':vid:' . $vid,
+                                ];
+                            }
+                        }
+                    }
+                    // Always apply global option-level price on top (after any rules)
+                    if (!empty($opt['price'])) {
+                        $adjust_dir   = ($opt['price_adjust'] ?? 'add') === 'remove' ? -1 : 1;
+                        $global_value = (float)$opt['price'] * $adjust_dir;
+                        $ordered_prices[] = [
+                            'adjuster'       => $opt['price_type'] ?? 'relative',
+                            'adjuster_value' => $global_value,
+                            '_source'        => 'global:vid:' . $vid,
+                        ];
+                    }
+                }
+            }
+
+            $product_prices = $ordered_prices;
+            $product_price  = $this->calculatePrice($product_prices, $prdprice);
             $product_price_formated = number_format($product_price, 2);
 
 
             $response = [
-                "success" => true,
-                "message" => "Product Price Found",
+                "rawdata"       => $product_prices,
+                "success"       => true,
+                "message"       => "Product Price Found",
                 "product_price" => $product_price_formated,
-                "raw_price" => $product_price
+                "raw_price"     => $product_price,
+                "_debug"        => [
+                    "selected_vids"  => $selected_value_ids,
+                    "matched_rules"  => array_map(fn($r) => [
+                        'adjuster'       => $r['adjuster'],
+                        'adjuster_value' => $r['adjuster_value'],
+                        'value_ids'      => array_values($r['value_ids']),
+                    ], $matched_rules),
+                    "vid_to_rules"   => $vid_to_rules,
+                    "all_rules"      => array_map(fn($r) => [
+                        'id'             => $r['id'],
+                        'is_enabled'     => $r['is_enabled'],
+                        'adjuster'       => $r['adjuster'],
+                        'adjuster_value' => $r['adjuster_value'],
+                        'conditions'     => json_decode($r['conditions_json'], true),
+                    ], $all_rules ?: []),
+                ],
             ];
             echo json_encode($response);
         } else {
@@ -532,40 +738,68 @@ class Admin extends DB
         exit();
     }
 
+    // function calculatePrice($rules, $prdprice)
+    // {
+    //     $basePrice = null;
+
+    //     foreach ($rules as $rule) {
+    //         if (isset($rule['adjuster']) && $rule['adjuster'] === "absolute" && $basePrice === null) {
+    //             $basePrice = (float)$rule['adjuster_value'];
+    //         }
+    //     }
+
+    //     if ($basePrice === null) {
+    //         $basePrice = (float)$prdprice;
+    //     }
+
+    //     // Step 1: Apply all RELATIVE (dollar add-ons) FIRST to get subtotal
+    //     // Add-ons (e.g. engraving +$50) must be calculated before percentage discounts
+    //     $subtotal = $basePrice;
+    //     foreach ($rules as $rule) {
+    //         if (isset($rule['adjuster']) && $rule['adjuster'] === "relative") {
+    //             $subtotal += (float)$rule['adjuster_value'];
+    //         }
+    //     }
+
+    //     // Step 2: Apply all PERCENTAGE adjustments to the subtotal (base + add-ons)
+    //     // E.g. 10% gold discount applies to (base + add-ons), not base only
+    //     $finalPrice = $subtotal;
+    //     foreach ($rules as $rule) {
+    //         if (isset($rule['adjuster']) && $rule['adjuster'] === "percentage") {
+    //             $finalPrice += $subtotal * ((float)$rule['adjuster_value'] / 100);
+    //         }
+    //     }
+
+    //     return round($finalPrice);
+    // }
+
     function calculatePrice($rules, $prdprice)
-    {
-        $basePrice = null;
+{
+    $price = (float)$prdprice;
 
-        foreach ($rules as $rule) {
-            if (isset($rule['adjuster']) && $rule['adjuster'] === "absolute" && $basePrice === null) {
-                $basePrice = (float)$rule['adjuster_value'];
-            }
+    foreach ($rules as $rule) {
+
+        if (!isset($rule['adjuster'])) {
+            continue;
         }
 
-        if ($basePrice === null) {
-            $basePrice = (float)$prdprice;
+        $value = (float)$rule['adjuster_value'];
+
+        if ($rule['adjuster'] === "absolute") {
+            $price = $value;
         }
 
-        // Step 1: Apply all RELATIVE (dollar add-ons) FIRST to get subtotal
-        // Add-ons (e.g. engraving +$50) must be calculated before percentage discounts
-        $subtotal = $basePrice;
-        foreach ($rules as $rule) {
-            if (isset($rule['adjuster']) && $rule['adjuster'] === "relative") {
-                $subtotal += (float)$rule['adjuster_value'];
-            }
+        if ($rule['adjuster'] === "relative") {
+            $price += $value;
         }
 
-        // Step 2: Apply all PERCENTAGE adjustments to the subtotal (base + add-ons)
-        // E.g. 10% gold discount applies to (base + add-ons), not base only
-        $finalPrice = $subtotal;
-        foreach ($rules as $rule) {
-            if (isset($rule['adjuster']) && $rule['adjuster'] === "percentage") {
-                $finalPrice += $subtotal * ((float)$rule['adjuster_value'] / 100);
-            }
+        if ($rule['adjuster'] === "percentage") {
+            $price += $price * ($value / 100);
         }
-
-        return round($finalPrice);
     }
+
+    return round($price);
+}
 
     function get_all_available_options()
     {
@@ -640,13 +874,15 @@ class Admin extends DB
                     foreach ($options as $index => $option) {
                         $main_option = $this->get_row("SELECT * FROM `bg_options` WHERE `option_id`='" . $option["option_id"] . "'");
                         $display_name = $main_option["display_name"];
+                        $front_label = !empty($main_option["front_label"]) ? $main_option["front_label"] : $display_name;
                         $product_option_id = $main_option["product_option_id"];
                         $option_id = $main_option["option_id"];
                         $name = $display_name;
 
-                        $html .= "<div class='option-group' data-optionid='$option_id'>";
+                        $html .= "<div class='option-group' data-optionid='$option_id' data-productoptionid='{$option['product_option_id']}'>";
                         $html .= "<div class='option-header'>";
-                        $html .= "<h3>$display_name ({$typearray[$main_option['type']]})</h3>";
+                        $html .= "<span class='option-drag-handle' title='Drag to reorder'>&#9776;</span>";
+                        $html .= "<h3>$front_label ({$typearray[$main_option['type']]})</h3>";
                         $html .= "<div class='custom-product-button'><button type='button' class='remove-option' data-optionid='" . $option['option_id'] . "' data-productid='" . $option['product_id'] . "'>Remove Option</button>";
                         if ($main_option['type'] != 'T') {
                             $html .= "<button type='button' class='edit-option' data-optionid='" . $option['option_id'] . "' data-productid='" . $option['product_id'] . "'>Edit Option</button>";
@@ -657,9 +893,9 @@ class Admin extends DB
                         $selectedoptionids = $option['options_values'];
 
                         if (!empty($selectedoptionids)) {
-                            $optionValues = $this->get_results("SELECT * FROM `bg_option_values` WHERE `option_id`='" . $option_id . "' AND FIND_IN_SET(`option_value_id`, '$selectedoptionids') ORDER BY `sort_order` ASC");
+                            $optionValues = $this->get_results("SELECT * FROM `bg_option_values` WHERE `option_id`='" . $option_id . "' AND `status`='1' AND FIND_IN_SET(`option_value_id`, '$selectedoptionids') ORDER BY `sort_order` ASC");
                         } else {
-                            $optionValues = $this->get_results("SELECT * FROM `bg_option_values` WHERE `option_id`='" . $option_id . "' ORDER BY `sort_order` ASC");
+                            $optionValues = $this->get_results("SELECT * FROM `bg_option_values` WHERE `option_id`='" . $option_id . "' AND `status`='1' ORDER BY `sort_order` ASC");
                         }
 
                         if (is_array($optionValues) && !empty($optionValues)) {
@@ -786,7 +1022,7 @@ class Admin extends DB
     {
         $shop = $shopRow['shop_domain'];
         $accessToken = $shopRow['access_token'];
-        $endpointBase = "https://$shop/admin/api/2025-04";
+        $endpointBase = "https://$shop/admin/api/" . SHOPIFY_API_VERSION;
 
         echo "<pre>";
         $allCategories = [];
@@ -926,7 +1162,7 @@ class Admin extends DB
     {
         $shop = $row['shop_domain'];
         $accessToken = $row['access_token'];
-        $endpoint = "https://$shop/admin/api/2025-04/graphql.json";
+        $endpoint = "https://$shop/admin/api/" . SHOPIFY_API_VERSION . "/graphql.json";
 
         if (strpos($variantId, 'gid://shopify/ProductVariant/') === false) {
             $variantId = "gid://shopify/ProductVariant/" . $variantId;
@@ -997,11 +1233,10 @@ class Admin extends DB
     }
     function create_orders($row)
     {
-        echo "<pre>";
         $shop = $row['shop_domain'];
         $accessToken = $row['access_token'];
 
-        $orders = $this->get_results("SELECT * FROM bigcommerce_orders WHERE `order_imported` = '' AND `status` IN ('Completed','Shipped') ORDER BY `date_created` ASC LIMIT 100");
+        $orders = $this->get_results("SELECT * FROM bigcommerce_orders WHERE `order_imported` = '' AND `status` IN ('Completed','Shipped') ORDER BY `date_created` ASC LIMIT 2");
 
         foreach ($orders as $order) {
             $orderId = $order['id'];
@@ -1095,6 +1330,7 @@ class Admin extends DB
 
             $payload = [
                 "order" => [
+                    "name" => "#".$orderId,
                     "line_items"         => $line_items,
                     "customer"           => $customer,
                     "billing_address"    => $billing_address,
@@ -1102,12 +1338,15 @@ class Admin extends DB
                     "email"              => $customer['email'],
                     "financial_status"   => "paid",
                     "fulfillment_status" => "fulfilled",
-                    "created_at"         => $shopifyDate
-                ]
+                    "created_at"         => $shopifyDate,
+                    "send_fulfillment_receipt" => false,
+                    "send_receipt"    => false,
+                "notify_customer" => false
+                ],
             ];
 
             $jsonData = json_encode($payload);
-            $ch = curl_init("https://$shop/admin/api/2025-04/orders.json");
+            $ch = curl_init("https://$shop/admin/api/" . SHOPIFY_API_VERSION . "/orders.json");
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_HTTPHEADER, [
                 "Content-Type: application/json",
@@ -1205,10 +1444,11 @@ class Admin extends DB
                 if (!$main_option) continue;
 
                 $display_name = $main_option["display_name"];
+                $front_label = !empty($main_option["front_label"]) ? $main_option["front_label"] : $display_name;
                 $product_option_row_id = $optionRow['id'] ?? $optionRow['product_option_id'] ?? 0;
 
                 $html .= "<div class='option-group' data-optionid='{$product_option_row_id}'>";
-                $html .= "<div class='option-header'><h3>" . htmlspecialchars($display_name) . " (" . ($typearray[$main_option['type']] ?? 'Option') . ")</h3></div>";
+                $html .= "<div class='option-header'><h3>" . htmlspecialchars($front_label) . " (" . ($typearray[$main_option['type']] ?? 'Option') . ")</h3></div>";
 
                 $selectedoptionids = $optionRow['options_values'] ?? '';
                 $query = "SELECT * FROM bg_option_values WHERE option_id='" . intval($main_option['option_id']) . "'";
@@ -1550,6 +1790,26 @@ class Admin extends DB
         $sort_order = 0;
         foreach ($rule_order as $rule_id) {
             $res = $admin->query("UPDATE bg_product_rules_extract set `sort_order` = '$sort_order' WHERE id='" . intval($rule_id) . "' AND product_id='" . intval($product_id) . "'");
+            $sort_order++;
+        }
+
+        echo json_encode(['success' => $res ? true : false]);
+        exit;
+    }
+
+    function update_option_order()
+    {
+        global $admin;
+
+        $option_order = $_POST['option_order'];
+        $product_id = intval($_POST['product_id'] ?? 0);
+        if (empty($option_order) || !$product_id) {
+            echo json_encode(['success' => false, 'message' => 'Missing data']);
+            exit;
+        }
+        $sort_order = 0;
+        foreach ($option_order as $product_option_id) {
+            $res = $admin->query("UPDATE bg_product_options SET `sort_order` = '$sort_order' WHERE `product_option_id`='" . intval($product_option_id) . "' AND `product_id`='" . intval($product_id) . "'");
             $sort_order++;
         }
 

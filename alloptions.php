@@ -3,6 +3,7 @@ require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/connect.php';
 start_session_once();
 require_https();
+redirect_if_no_shopify_context();
 
 $hw_token = $_GET['hw_token'] ?? '';
 $decoded  = $hw_token ? json_decode(base64_decode($hw_token), true) : [];
@@ -91,6 +92,7 @@ $limit      = $response['per_page'] ?? 20;
         	gap: 20px;
         	position: relative;
         }
+
 
         .products-grid {
         	display: flex;
@@ -229,9 +231,10 @@ $limit      = $response['per_page'] ?? 20;
 									}
                                     echo htmlspecialchars($title) ?>
                                 </div>
-                                <div class="product-status">
+                                <div class="product-status option-row-actions">
                                     <!--<?= $opt['status'] == 1 ? 'Active' : 'Inactive' ?>-->
-                                    <button class="edit_option" data-optionid="<?= $opt['option_id'] ;?>"> Edit</button>
+                                    <button type="button" class="edit_option" data-optionid="<?= $opt['option_id'] ;?>">Edit</button>
+                                    <button type="button" class="delete_option" data-optionid="<?= $opt['option_id'] ;?>">Delete</button>
                                 </div>
                             </div>
                         </div>
@@ -264,17 +267,24 @@ $limit      = $response['per_page'] ?? 20;
 		<form id="editOptionForm" enctype="multipart/form-data">
 		  <input type="hidden" name="action" value="update_option_values">
 		  <div style="margin-top:20px;">
-			<label>Option Title (Type: <span id="get_type"></span>)</label>			
+			<label>Option Title (Type: <span id="get_type"></span>)</label>
 			<input type="text" name="option_name" id="option_name" value="">
+		  </div>
+		  <div style="margin-top:10px;">
+			<label>Display Name <small style="color:#888;">(optional — shown in app &amp; storefront instead of Option Title)</small></label>
+			<input type="text" name="front_label" id="front_label" value="" placeholder="Leave empty to use Option Title">
 		  </div>
 		  <div style="margin-top:10px;margin-bottom:10px;" id="showtypee" style="display:none;">
 			<label><input type="checkbox" name="engraving" id="engraving" value="Yes" style="width:20px;height:20px;"> Engraving</label>			
 					</div>
 		  <div id="optionValuesWrapper"></div>
 		  <button type="button" id="addValueBtn">+ Add Value</button>
-		  <div style="margin-top:20px; text-align: right;">
+		  <div style="margin-top:20px; text-align: right; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+			<button type="button" id="deleteOptionFromModal" class="btn-delete-option" style="background:#dc3545;color:#fff;">Delete option</button>
+			<div style="display:flex; gap:8px;">
 			<button type="submit">Save</button>
 			<button type="button" class='close-modal'>Close</button>
+			</div>
 		  </div>
 		</form>
 	  </div>
@@ -306,6 +316,7 @@ $limit      = $response['per_page'] ?? 20;
 	  </div>
 	</div>
 	
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
     <script>
 		document.addEventListener("DOMContentLoaded", function () {
 		  const pageLoader = document.getElementById("pageLoader");
@@ -319,12 +330,14 @@ $limit      = $response['per_page'] ?? 20;
 		  // ===== Add Option Elements =====
 		  const addOptionModal = document.getElementById("addOptionModal");
 		  const addOptionForm = document.getElementById("addOptionForm");
+		  let newDefaultSlotIndex = 0;
 
 		  // =============================
 		  // Open Edit Option Modal
 		  document.addEventListener("click", function (e) {
 			if (e.target.classList.contains("edit_option")) {
 			  const optionId = e.target.dataset.optionid;
+			  newDefaultSlotIndex = 0;
 			  pageLoader.style.display = "flex";
 				document.getElementById('addValueBtn').style.display='block';
 				document.getElementById('showtypee').style.display='none';
@@ -339,6 +352,7 @@ $limit      = $response['per_page'] ?? 20;
 				  if (data.success) {
 					optionValuesWrapper.innerHTML = "";
 					document.getElementById('option_name').value = data.data.option.display_name;
+				document.getElementById('front_label').value = data.data.option.front_label ?? '';
 					if(data.data.option.type=='RT'){
 						document.getElementById('get_type').innerHTML = "Radio";
 					}else if(data.data.option.type=='S'){
@@ -353,23 +367,42 @@ $limit      = $response['per_page'] ?? 20;
 						document.getElementById('engraving').checked = true;
 					}
 
-					// Fill values
-					data.data.values.forEach(val => {
+					// Fill values (Radio/Select: one default per option set → is_default in DB)
+					const showDefaultRadios = (data.data.option.type === 'RT' || data.data.option.type === 'S');
+					const vals = data.data.values || [];
+					const defaultIdx = vals.findIndex(v => v.is_default == 1 || v.is_default === '1');
+					vals.forEach((val, idx) => {
+					  let defaultRadio = '';
+					  if (showDefaultRadios) {
+						const defChecked = (defaultIdx === -1 ? idx === 0 : idx === defaultIdx) ? 'checked' : '';
+						defaultRadio = `<label class="default-value-radio" title="Default selection for storefront"><input type="radio" name="default_value_id" value="${val.option_value_id}" ${defChecked} /></label>`;
+					  }
 					  optionValuesWrapper.insertAdjacentHTML(
 						"beforeend",
 						`<div class="option-value-row">
+						${defaultRadio}
+						<span class="value-drag-handle" title="Drag to reorder">&#9776;</span>
 						<img src="${
-							val.image && val.image !== '' 
-							? `/images/${val.image}` 
+							val.image && val.image !== ''
+							? `/images/${val.image}`
 							: 'https://placehold.co/50x50/cccccc/ffffff?text=No+Img'
 						}"
-						alt="Preview" 
-						class="preview-image" 
-						width="50" 
+						alt="Preview"
+						class="preview-image"
+						width="50"
 						height="50"
 						style="object-fit: cover; border: 1px solid #ccc; border-radius: 4px;"
 						/>
 						   <input type="text" name="existingvalues[${val.option_value_id}]" value="${val.value}" />
+						   <select name="existingpriceadjust[${val.option_value_id}]" style="width:115px;">
+						     <option value="add" ${(!val.price_adjust || val.price_adjust === 'add') ? 'selected' : ''}>+ Add</option>
+						     <option value="remove" ${val.price_adjust === 'remove' ? 'selected' : ''}>- Remove</option>
+						   </select>
+						   <input type="number" step="0.01" min="0" name="existingprices[${val.option_value_id}]" value="${val.price ?? ''}" placeholder="Price (optional)" style="width:100px;" />
+						   <select name="existingpricetypes[${val.option_value_id}]" style="width:100px;">
+						     <option value="relative" ${(!val.price_type || val.price_type === 'relative') ? 'selected' : ''}>$ Fixed</option>
+						     <option value="percentage" ${val.price_type === 'percentage' ? 'selected' : ''}>% Percent</option>
+						   </select>
 						   <input type="file" name="fileupload[${val.option_value_id}]" accept=".jpg, .jpeg, .png, .webp" />
 						   <button type="button" class="remove-value">❌</button>
 						 </div>`
@@ -387,6 +420,11 @@ $limit      = $response['per_page'] ?? 20;
 					hiddenField.value = optionId;
 
 					editOptionModal.style.display = "block";
+					Sortable.create(optionValuesWrapper, {
+					  handle: ".value-drag-handle",
+					  animation: 150,
+					  ghostClass: "sortable-ghost"
+					});
 				  } else {
 					alert("Failed to load option");
 				  }
@@ -401,22 +439,39 @@ $limit      = $response['per_page'] ?? 20;
 		  // =============================
 		  // Add new value field in Edit Modal
 		  addValueBtn.addEventListener("click", function () {
+			const slot = newDefaultSlotIndex++;
+			const defaultRadio = `<label class="default-value-radio" title="Default selection for storefront"><input type="radio" name="default_value_id" value="new_${slot}" /></label>`;
 			optionValuesWrapper.insertAdjacentHTML(
 			  "beforeend",
 			  `<div class="option-value-row">
-			  <img 
-								src="https://placehold.co/50x50/cccccc/ffffff?text=No+Img" 
-								alt="Preview" 
-								class="preview-image" 
-								width="50" 
+			  ${defaultRadio}
+			  <span class="value-drag-handle" title="Drag to reorder">&#9776;</span>
+			  <img
+								src="https://placehold.co/50x50/cccccc/ffffff?text=No+Img"
+								alt="Preview"
+								class="preview-image"
+								width="50"
 								height="50"
 								style="object-fit: cover; border: 1px solid #ccc; border-radius: 4px;"
 							/>
 				 <input type="text" name="values[]" placeholder="Enter value" />
+				 <select name="newpriceadjust[]" style="width:115px;">
+				   <option value="add">+ Add</option>
+				   <option value="remove">- Remove</option>
+				 </select>
+				 <input type="number" step="0.01" min="0" name="newprices[]" placeholder="Price (optional)" style="width:100px;" />
+				 <select name="newpricetypes[]" style="width:100px;">
+				   <option value="relative">$ Fixed</option>
+				   <option value="percentage">% Percent</option>
+				 </select>
 				  <input type="file" name="fileuploadnew[]" accept=".jpg, .jpeg, .png, .webp" />
 				 <button type="button" class="remove-value">❌</button>
 			   </div>`
 			);
+			const allDefaultRadios = optionValuesWrapper.querySelectorAll('input[name="default_value_id"]');
+			if (allDefaultRadios.length === 1) {
+			  allDefaultRadios[0].checked = true;
+			}
 		  });
 
 		  // Remove value field
@@ -435,6 +490,50 @@ $limit      = $response['per_page'] ?? 20;
 			  optionValuesWrapper.innerHTML = "";
 			  addOptionForm.reset();
 			}
+		  });
+
+		  function deleteOptionById(optionId) {
+			if (!optionId) return;
+			pageLoader.style.display = "flex";
+			fetch("process.php?domain=<?= $shop_domain ?>", {
+			  method: "POST",
+			  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+			  body: new URLSearchParams({ action: "delete_option", option_id: String(optionId) })
+			})
+			  .then(res => res.json())
+			  .then(data => {
+				pageLoader.style.display = "none";
+				if (data.success) {
+				  alert("Option deleted.");
+				  editOptionModal.style.display = "none";
+				  location.reload();
+				} else {
+				  alert(data.msg || "Cannot delete this option.");
+				}
+			  })
+			  .catch(() => {
+				pageLoader.style.display = "none";
+				alert("Error deleting option.");
+			  });
+		  }
+
+		  document.addEventListener("click", function (e) {
+			if (e.target.classList.contains("delete_option")) {
+			  const optionId = e.target.dataset.optionid;
+			  if (!confirm("Delete this option? It will be removed from the list if it is not used on any product.")) return;
+			  deleteOptionById(optionId);
+			}
+		  });
+
+		  document.getElementById("deleteOptionFromModal").addEventListener("click", function () {
+			const hidden = editOptionForm.querySelector("input[name='option_id']");
+			const optionId = hidden ? hidden.value : "";
+			if (!optionId) {
+			  alert("Open an option to edit first.");
+			  return;
+			}
+			if (!confirm("Delete this option? It will be removed from the list if it is not used on any product.")) return;
+			deleteOptionById(optionId);
 		  });
 
 		  // =============================
@@ -500,6 +599,7 @@ $limit      = $response['per_page'] ?? 20;
 			  addOptionModal.style.display = "block";
 			}
 		  });
+
 		});
 
 
@@ -507,6 +607,17 @@ $limit      = $response['per_page'] ?? 20;
 	</script>
 	
 	<style>
+		.value-drag-handle {
+			cursor: grab;
+			color: #aaa;
+			font-size: 18px;
+			padding: 0 6px;
+			flex-shrink: 0;
+			user-select: none;
+		}
+		.value-drag-handle:active { cursor: grabbing; }
+		.sortable-ghost { opacity: 0.4; background: #e3f0fb; border-radius: 6px; }
+
 		/* Modal overlay */
 		.modal-overlay {
 		  display: none; /* shown via JS */
@@ -528,8 +639,8 @@ $limit      = $response['per_page'] ?? 20;
 		  background: #fff;
 		  border-radius: 8px;
 		  padding: 20px;
-		  width: 600px;
-		  max-width: 95%;
+		  width: 95%;
+		  max-width: 800px;
 		  max-height: 90vh; /* prevent overflowing off screen */
 		  overflow-y: auto; /* inner scroll */
 		  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
@@ -580,6 +691,20 @@ $limit      = $response['per_page'] ?? 20;
 		  gap: 10px;
 		}
 
+		.default-value-radio {
+		  flex-shrink: 0;
+		  display: flex;
+		  align-items: center;
+		  margin: 0;
+		  cursor: pointer;
+		}
+		.default-value-radio input[type="radio"] {
+		  width: auto;
+		  height: auto;
+		  margin: 0 4px 0 0;
+		  flex: none;
+		}
+
 		.option-value-row input {
 		  flex: 1;
 		  padding: 8px 10px;
@@ -611,11 +736,41 @@ $limit      = $response['per_page'] ?? 20;
 		  border: none;
 		  font-size: 14px;
 		}
-		button.edit_option {
-			width: 72px;
+		.option-row-actions {
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			gap: 8px;
+		}
+		button.edit_option,
+		button.delete_option {
+			min-width: 72px;
 			height: 28px;
 			border-radius: 5px;
 			border: none;
+			cursor: pointer;
+			font-size: 12px;
+		}
+		button.edit_option {
+			background: #dedede;
+			color: #000;
+		}
+		button.delete_option {
+			background: #dc3545;
+			color: #fff;
+		}
+		button.delete_option:hover {
+			background: #c82333;
+		}
+		.btn-delete-option {
+			padding: 8px 14px !important;
+			border-radius: 6px;
+			border: none;
+			cursor: pointer;
+			font-size: 14px;
+		}
+		.btn-delete-option:hover {
+			background: #c82333 !important;
 		}
 		form.product-search input[type="text"] {
 			margin: 0 4px 0 0;

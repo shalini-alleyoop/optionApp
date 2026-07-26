@@ -1,6 +1,16 @@
 <?php
 
-header('Access-Control-Allow-Origin: https://qheqg4-bu.myshopify.com');
+$allowed_origins = [
+    'https://qheqg4-bu.myshopify.com',
+    'https://royalhawaiianheritagejewelry.com',
+    'https://www.royalhawaiianheritagejewelry.com',
+];
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if (in_array($origin, $allowed_origins)) {
+    header('Access-Control-Allow-Origin: ' . $origin);
+} else {
+    header('Access-Control-Allow-Origin: https://qheqg4-bu.myshopify.com');
+}
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, X-Requested-With");
 require_once __DIR__ . '/helpers.php';
@@ -53,8 +63,12 @@ if (isset($_GET['action']) && $_GET['action'] == 'product_creation') {
     $admin->delete_rule();
 } else if (isset($_POST['action']) && $_POST['action'] == 'update_rule_order') {
     $admin->update_rule_order();
+} else if (isset($_POST['action']) && $_POST['action'] == 'update_option_order') {
+    $admin->update_option_order();
 } else if (isset($_POST['action']) && $_POST['action'] == 'update_adjuster_status') {
     $admin->update_adjuster_status();
 } else if (isset($_POST['action']) && $_POST['action'] == 'update_rule_value') {
     $admin->update_rule_value();
+} else if (isset($_POST['action']) && $_POST['action'] == 'delete_option') {
+    $admin->delete_option();
 }

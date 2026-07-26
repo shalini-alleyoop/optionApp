@@ -4,6 +4,17 @@ require_once __DIR__ . '/config.php';
 function start_session_once(): void {
     if (session_status() !== PHP_SESSION_ACTIVE) {
         session_name(SESSION_NAME);
+        // Allow the session cookie to travel when the app is loaded inside
+        // the Shopify admin iframe (top frame is admin.shopify.com; our app
+        // is a cross-site iframe). Requires HTTPS.
+        $params = [
+            'lifetime' => 0,
+            'path'     => '/',
+            'secure'   => true,
+            'httponly' => true,
+            'samesite' => 'None',
+        ];
+        session_set_cookie_params($params);
         session_start();
     }
 }
@@ -81,7 +92,78 @@ function redirect_to(string $url): never {
     exit;
 }
 
+/**
+ * Redirect the TOP-LEVEL browser window. Used when the destination refuses
+ * iframe embedding (e.g. admin.shopify.com). From inside a Shopify admin
+ * iframe a plain Location header causes "refused to connect" errors.
+ */
+function redirect_to_top(string $url): never {
+    $u = json_encode($url, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
+    $h = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+    http_response_code(200);
+    header('Content-Type: text/html; charset=utf-8');
+    // Navigate the top-level window if we have one (same-origin or not).
+    // If the assignment throws (rare sandbox / cross-origin edge cases),
+    // show a link instead of redirecting the current frame -- redirecting
+    // the iframe itself to admin.shopify.com causes "refused to connect".
+    echo "<!doctype html><meta charset=\"utf-8\"><title>Redirecting…</title>";
+    echo "<script>(function(){var u={$u};try{(window.top||window).location.href=u;}catch(e){document.body.innerHTML='<p style=\"font-family:sans-serif;padding:30px;\">Please open this app from your Shopify admin. <a href=\"'+u+'\" target=\"_top\">Continue in Shopify admin</a>.</p>';}})();</script>";
+    echo "<noscript><meta http-equiv=\"refresh\" content=\"0;url={$h}\"></noscript>";
+    echo "<p style=\"font-family:sans-serif;padding:30px;\">Redirecting… <a href=\"{$h}\" target=\"_top\">Continue in Shopify admin</a>.</p>";
+    exit;
+}
+
 function mask_token(string $token): string {
     if (strlen($token) <= 8) return str_repeat('*', max(0, strlen($token)-2)) . substr($token, -2);
     return substr($token, 0, 4) . str_repeat('*', strlen($token) - 8) . substr($token, -4);
+}
+
+/**
+ * Lightweight access check for admin pages. Bounces direct-browser visits to
+ * the Shopify admin app URL so the app can only be opened through Shopify.
+ *
+ * Pass conditions (any one):
+ *  - Sec-Fetch-Site is anything other than "none" -- this means the request
+ *    came from a link, an iframe load, or another page, not a typed URL or
+ *    bookmark. Reliably set by Chrome/Edge/Firefox/Safari and not forgeable
+ *    from a normal browser address bar. Covers:
+ *      * Shopify admin iframe loads (cross-site)
+ *      * Intra-app link clicks from within the iframe (same-origin)
+ *  - ?host= is present (Shopify admin iframe load, legacy browser fallback)
+ *  - ?hw_token= is present (post-OAuth redirect from callback.php)
+ *  - $_SESSION['shop'] is set (prior Shopify-admin entry in this session)
+ *
+ * Sec-Fetch-Site: "none" means the request was user-initiated with no
+ * referring origin -- address bar, bookmark, new tab -- so we block it.
+ *
+ * This is a UX guard, NOT a cryptographic boundary. It just stops casual URL
+ * typing; legit access via Shopify admin and its subsequent navigation is
+ * always allowed without relying on cookies (which some browsers block in
+ * cross-site iframe contexts).
+ */
+function redirect_if_no_shopify_context(): void {
+    start_session_once();
+
+    $secSite = $_SERVER['HTTP_SEC_FETCH_SITE'] ?? '';
+
+    // Any origin-bearing request (link / iframe / fetch / redirect chain).
+    if ($secSite !== '' && $secSite !== 'none') {
+        // Opportunistically persist the shop for intra-app navigation when
+        // the session cookie survives; harmless if it doesn't.
+        if (!empty($_GET['shop'])) {
+            $incomingShop = normalize_shop_domain((string)$_GET['shop']);
+            if ($incomingShop === SHOPIFY_ALLOWED_SHOP) {
+                $_SESSION['shop'] = SHOPIFY_ALLOWED_SHOP;
+            }
+        }
+        return;
+    }
+
+    // Legacy / header-stripped fallbacks.
+    if (!empty($_GET['host']))     { $_SESSION['shop'] = SHOPIFY_ALLOWED_SHOP; return; }
+    if (!empty($_GET['hw_token'])) return;
+    if (!empty($_SESSION['shop'])) return;
+
+    // Direct URL typed in browser -> push to Shopify admin app URL.
+    redirect_to_top('https://' . SHOPIFY_ALLOWED_SHOP . '/admin/apps/' . SHOPIFY_API_KEY);
 }

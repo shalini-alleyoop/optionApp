@@ -921,6 +921,22 @@ class DB
     
     
     /**
+     * Flush any remaining result sets left by a stored procedure (CALL ...).
+     * MySQLi requires all result sets to be consumed before running another query.
+     * Call this immediately after get_results() on a CALL statement.
+     */
+    public function flush_results()
+    {
+        while ($this->link->more_results()) {
+            $this->link->next_result();
+            $res = $this->link->store_result();
+            if ($res) {
+                $res->free();
+            }
+        }
+    }
+
+    /**
      * Disconnect from db server
      * Called automatically from __destruct function
      */

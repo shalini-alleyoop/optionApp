@@ -59,6 +59,7 @@ if (REGISTER_WEBHOOKS_ON_INSTALL) {
 
 $_SESSION['access_token'] = $accessToken;
 $_SESSION['hs_token'] = base64_encode(json_encode(['myshopifyDomain' => $shop]));
+$_SESSION['shop'] = $shop;
 
 $encodedURL = '?hw_token=' . urlencode($_SESSION['hs_token']);
 redirect_to(APP_URL . '/dashboard.php' . $encodedURL);

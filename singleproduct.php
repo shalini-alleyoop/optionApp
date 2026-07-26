@@ -3,6 +3,7 @@ require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/connect.php';
 start_session_once();
 require_https();
+redirect_if_no_shopify_context();
 
 $hw_token = $_GET['hw_token'] ?? '';
 $productId = $_GET['productId'] ?? '';
@@ -128,6 +129,10 @@ if ($row) {
             </div>
             <div class="prdtabs-content prd-rules hidden" id="prdRules">
 				<div class="prd-rules-header">
+					<div class="prd-rules-filter-row">
+						<input type="text" id="rulesFilterInput" class="rules-filter-input" placeholder="Filter rules (e.g. medium, 10mm, medium 10mm)…" autocomplete="off">
+						<span id="rulesFilterCount" class="rules-filter-count"></span>
+					</div>
 					<button class="add-rule-btn" data-product-id="<?= $singleproduct ?>">+ Add New Rule</button>
 				</div>
                 <?= $product_rules["html"] ?>
@@ -508,6 +513,25 @@ if ($row) {
 					  if (data.success) {
 						// Fill modal data
 						optionValuesWrapper.innerHTML = ""; // clear existing
+						  const checkdiv = document.createElement("div");
+						  checkdiv.classList.add("form-check", "mt-2", "requireddiv");
+						  const requiredCheckbox = document.createElement("input");
+						  requiredCheckbox.type = "checkbox";
+						  requiredCheckbox.name = "is_required";
+						  requiredCheckbox.id = "is_required";
+						  requiredCheckbox.checked = data.data.required == '1' ? true : false;
+						  requiredCheckbox.classList.add("form-check-input");
+						  
+						  const requiredLabel = document.createElement("label");
+						  requiredLabel.htmlFor = "is_required";
+						  requiredLabel.textContent = "Required option";
+						  requiredLabel.classList.add("form-check-label");
+
+						  checkdiv.appendChild(requiredCheckbox);
+						  checkdiv.appendChild(requiredLabel);
+						  
+						  optionValuesWrapper.appendChild(checkdiv);
+						  
 						data.data.values.forEach(val => {
 						  // Create label + checkbox
 						  const div = document.createElement("div");
@@ -984,10 +1008,46 @@ if ($row) {
 		
     </script>
 	
+	<style>
+		.option-drag-handle {
+			cursor: grab;
+			font-size: 18px;
+			color: #aaa;
+			margin-right: 10px;
+			user-select: none;
+			flex-shrink: 0;
+		}
+		.option-drag-handle:active { cursor: grabbing; }
+		.option-group.ui-sortable-helper { box-shadow: 0 4px 12px rgba(0,0,0,0.15); opacity: 0.95; }
+		.option-group.ui-sortable-placeholder { border: 2px dashed #aaa; background: #f9f9f9; visibility: visible !important; }
+	</style>
 	<script>
 		$(function() {
 		  const pageLoader = document.getElementById("pageLoader");
 		  const shopDomain = "<?= $shop_domain ?>";
+
+		  // Make option groups sortable via drag handle
+		  $(".custom-product-options").sortable({
+			items: ".option-group",
+			handle: ".option-drag-handle",
+			cursor: "grab",
+			placeholder: "option-group ui-sortable-placeholder",
+			update: function(event, ui) {
+			  var productId = $(".custom-product-options").data("productid");
+			  var orderedIds = [];
+			  $(".option-group").each(function() {
+				orderedIds.push($(this).data("productoptionid"));
+			  });
+			  pageLoader.style.display = "flex";
+			  $.ajax({
+				url: "process.php?domain=" + shopDomain,
+				type: "POST",
+				data: { product_id: productId, option_order: orderedIds, action: 'update_option_order' },
+				success: function() { pageLoader.style.display = "none"; },
+				error: function() { pageLoader.style.display = "none"; alert("Error saving option order"); }
+			  });
+			}
+		  });
 
 		  // Make rule blocks sortable (tbody for table layout)
 		  $("#prdRules .rules-spreadsheet-table tbody").sortable({
@@ -1012,16 +1072,67 @@ if ($row) {
 		  });
 		  $("#prdRules").disableSelection();
 
+		  // ===== Filter rules by conditions (e.g. "medium", "10mm", "medium 10mm") =====
+		  const rulesFilterInput = document.getElementById("rulesFilterInput");
+		  const rulesFilterCount = document.getElementById("rulesFilterCount");
+		  const allRuleRows = document.querySelectorAll("#prdRules tr.rule-block");
+
+		  function getVisiblePriceInputs() {
+			const rows = document.querySelectorAll("#prdRules tr.rule-block");
+			const visible = [];
+			rows.forEach(function(row) {
+			  if (row.style.display !== "none") {
+				const input = row.querySelector(".rule-price-input");
+				if (input) visible.push(input);
+			  }
+			});
+			return visible;
+		  }
+
+		  function updateRulesFilter() {
+			const q = (rulesFilterInput && rulesFilterInput.value) ? rulesFilterInput.value.trim() : "";
+			const terms = q ? q.toLowerCase().split(",").map(function(s) { return s.trim(); }).filter(Boolean) : [];
+			let visibleCount = 0;
+			allRuleRows.forEach(function(row) {
+			  const conditionsCell = row.querySelector(".rule-conditions-cell");
+			  const typeCell = row.querySelector(".rule-type-cell");
+			  const text = [conditionsCell, typeCell].map(function(el) { return el ? el.textContent : ""; }).join(" ").toLowerCase();
+			  const match = terms.length === 0 || terms.every(function(term) { return text.indexOf(term) !== -1; });
+			  row.style.display = match ? "" : "none";
+			  if (match) visibleCount++;
+			});
+			if (rulesFilterCount) {
+			  if (terms.length === 0) {
+				rulesFilterCount.textContent = "";
+			  } else {
+				rulesFilterCount.textContent = "Showing " + visibleCount + " of " + allRuleRows.length + " rules";
+			  }
+			}
+		  }
+
+		  if (rulesFilterInput) {
+			rulesFilterInput.addEventListener("input", updateRulesFilter);
+			rulesFilterInput.addEventListener("keydown", function(e) {
+			  if (e.key === "Escape") {
+				rulesFilterInput.value = "";
+				updateRulesFilter();
+				rulesFilterInput.blur();
+			  }
+			});
+		  }
+
 		  // ===== Spreadsheet-style inline price editing: Enter/Tab moves to next row =====
 		  const priceInputs = document.querySelectorAll(".rule-price-input");
-		  priceInputs.forEach(function(input, idx) {
+		  priceInputs.forEach(function(input) {
 			input.addEventListener("blur", function() { saveRuleValue(this); });
 			input.addEventListener("keydown", function(e) {
 			  if (e.key === "Enter" || e.key === "Tab") {
 				e.preventDefault();
 				saveRuleValue(this);
+				const visibleInputs = getVisiblePriceInputs();
+				const idx = visibleInputs.indexOf(this);
 				const nextIdx = (e.key === "Enter" || !e.shiftKey) ? idx + 1 : idx - 1;
-				const next = priceInputs[nextIdx];
+				const next = visibleInputs[nextIdx];
 				if (next) { next.focus(); next.select(); }
 			  }
 			});
@@ -1303,7 +1414,39 @@ if ($row) {
             display: none;
         }
 
-        .prd-rules-header { margin-bottom: 16px; }
+        .prd-rules-header {
+            margin-bottom: 16px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px;
+        }
+        .prd-rules-filter-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+            min-width: 260px;
+        }
+        .rules-filter-input {
+            flex: 1;
+            max-width: 380px;
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+        }
+        .rules-filter-input:focus {
+            border-color: #1976D2;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(25,118,210,0.15);
+        }
+        .rules-filter-input::placeholder { color: #adb5bd; }
+        .rules-filter-count {
+            font-size: 13px;
+            color: #6c757d;
+            white-space: nowrap;
+        }
         .prd-rules .add-rule-btn {
             background: #28a745;
             color: #fff;
@@ -1318,7 +1461,6 @@ if ($row) {
 
         /* Rules spreadsheet table - clean Shopify-style design */
         .rules-spreadsheet-wrap {
-            overflow-x: auto;
             margin-top: 12px;
             background: #fff;
             border-radius: 8px;
@@ -1583,6 +1725,9 @@ if ($row) {
 			border: 1px solid #dedede;
 			padding: 5px 10px;
 			font-size: 12px;
+		}
+		.requireddiv {
+			margin-bottom:20px;
 		}
     </style>
 </body>

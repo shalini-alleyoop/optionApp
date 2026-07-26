@@ -3,6 +3,7 @@ require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/connect.php';
 start_session_once();
 require_https();
+redirect_if_no_shopify_context();
 
 $hw_token = $_GET['hw_token'] ?? '';
 $decoded  = $hw_token ? json_decode(base64_decode($hw_token), true) : [];
@@ -248,6 +249,7 @@ a.btn.install-btn + a {
 		<div>
 			<a class="btn install-btn" href="alloptions.php?shop=<?= urlencode($shop) ?>">All Options</a>
 			<a class="btn install-btn" href="insert_script.php?shop=<?= urlencode($shop) ?>">Insert Script</a>
+			<a class="btn install-btn" href="engraving-editor.php?shop=<?= urlencode($shop) ?>">Engraving Instructions</a>
 		</div>
     </div>
     <div class="dashboard-wrapper">

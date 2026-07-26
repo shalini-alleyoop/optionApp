@@ -1,8 +1,10 @@
 <?php
 require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/connect.php';
 start_session_once();
 require_https();
+redirect_if_no_shopify_context();
 
 $hw_token = $_GET['hw_token'] ?? '';
 $product_handle = $_GET['handle'] ?? '';
@@ -23,7 +25,7 @@ $accessToken = $row['access_token'];
 // Get all themes
 function getThemes($shop, $accessToken)
 {
-    $url = "https://$shop/admin/api/2025-04/themes.json";
+    $url = "https://$shop/admin/api/" . SHOPIFY_API_VERSION . "/themes.json";
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
@@ -37,7 +39,7 @@ function getThemes($shop, $accessToken)
 // Check if asset exists
 function assetExists($shop, $accessToken, $themeId, $assetKey)
 {
-    $url = "https://$shop/admin/api/2025-04/themes/$themeId/assets.json?asset[key]=$assetKey";
+    $url = "https://$shop/admin/api/" . SHOPIFY_API_VERSION . "/themes/$themeId/assets.json?asset[key]=$assetKey";
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
@@ -53,7 +55,7 @@ function assetExists($shop, $accessToken, $themeId, $assetKey)
 // Save asset to theme
 function saveAsset($shop, $accessToken, $themeId, $assetKey, $content)
 {
-    $url = "https://$shop/admin/api/2025-04/themes/$themeId/assets.json";
+    $url = "https://$shop/admin/api/" . SHOPIFY_API_VERSION . "/themes/$themeId/assets.json";
     $payload = json_encode([
         "asset" => [
             "key" => $assetKey,
@@ -78,7 +80,7 @@ function saveAsset($shop, $accessToken, $themeId, $assetKey, $content)
 // Check if theme.liquid contains our script
 function scriptTagExists($shop, $accessToken, $themeId)
 {
-    $getUrl = "https://$shop/admin/api/2025-04/themes/$themeId/assets.json?asset[key]=layout/theme.liquid";
+    $getUrl = "https://$shop/admin/api/" . SHOPIFY_API_VERSION . "/themes/$themeId/assets.json?asset[key]=layout/theme.liquid";
     $ch = curl_init($getUrl);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
@@ -99,7 +101,7 @@ function scriptTagExists($shop, $accessToken, $themeId)
 // Insert script tag into theme.liquid
 function insertScriptTag($shop, $accessToken, $themeId)
 {
-    $getUrl = "https://$shop/admin/api/2025-04/themes/$themeId/assets.json?asset[key]=layout/theme.liquid";
+    $getUrl = "https://$shop/admin/api/" . SHOPIFY_API_VERSION . "/themes/$themeId/assets.json?asset[key]=layout/theme.liquid";
     $ch = curl_init($getUrl);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
@@ -119,7 +121,7 @@ function insertScriptTag($shop, $accessToken, $themeId)
         $themeLiquid = str_replace("</body>", $scriptTag . "\n</body>", $themeLiquid);
     }
 
-    $updateUrl = "https://$shop/admin/api/2025-04/themes/$themeId/assets.json";
+    $updateUrl = "https://$shop/admin/api/" . SHOPIFY_API_VERSION . "/themes/$themeId/assets.json";
     $payload = json_encode([
         "asset" => [
             "key" => "layout/theme.liquid",
