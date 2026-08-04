@@ -1,5 +1,33 @@
 (function () {
     const ENDPOINT = `https://apps.royalhawaiianheritage.com/process.php?domain=${Shopify.shop}`;
+
+    async function loadEngravingInstructions() {
+        const accordion = document.querySelector('.engraving-instructions');
+        if (!accordion) return;
+
+        try {
+            const response = await fetch(ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ action: 'get_engraving_instructions' })
+            });
+            const result = await response.json();
+            if (!result.success || !result.data) return;
+
+            const title = accordion.querySelector('.engraving-instructions-trigger span');
+            const content = accordion.querySelector('.engraving-instructions-content');
+            if (title) title.textContent = result.data.title;
+            if (content) {
+                content.innerHTML = result.data.content_html;
+                content.querySelectorAll('ul').forEach(list => list.classList.add('engraving-instruction-list'));
+                content.querySelectorAll('ul li').forEach(item => {
+                    if (!item.querySelector(':scope > span')) item.prepend(document.createElement('span'));
+                });
+            }
+        } catch (error) {
+            console.warn('Unable to load engraving instructions.', error);
+        }
+    }
     const ACTIONS = {
         GET_OPTIONS: 'get_options',
         GET_PRICE: 'get_price'
@@ -657,6 +685,7 @@
                             drawerToggle.type = "button";
                             const drawerContent = document.getElementById("drawerContent");
                             if (!drawerContent) return;
+                            loadEngravingInstructions();
                             engravingInstructions();
                             drawerContent.innerHTML = result.form;
 

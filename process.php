@@ -71,4 +71,7 @@ if (isset($_GET['action']) && $_GET['action'] == 'product_creation') {
     $admin->update_rule_value();
 } else if (isset($_POST['action']) && $_POST['action'] == 'delete_option') {
     $admin->delete_option();
+} else if (isset($_POST['action']) && $_POST['action'] == 'get_engraving_instructions') {
+    header('Content-Type: application/json');
+    echo json_encode(['success' => true, 'data' => $admin->get_engraving_instructions($domain)]);
 }

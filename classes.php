@@ -9,6 +9,21 @@ class Admin extends DB
         return $stmt;
     }
 
+    function get_engraving_instructions($shop_domain)
+    {
+        $shop_domain = $this->escape($shop_domain);
+        $row = $this->get_row("SELECT title, content_html FROM engraving_instructions WHERE shop_domain = '$shop_domain' LIMIT 1");
+
+        if (!$row) {
+            $row = [
+                'title' => 'Engraving & Customization Terms',
+                'content_html' => '<p>I understand that all custom items are made especially for me, are final sale, and that:</p><ul><li>Orders are not eligible for exchanges, refunds, or cancellations.</li><li>No changes can be made once the order has been submitted.</li><li>Due to the handmade process, engraving may vary slightly from samples and previews.</li><li>Lettering may vary depending on the size, width, and length of the name.</li><li>Custom orders typically require approximately 3-6 weeks for production. Expedited service is available.</li></ul>'
+            ];
+        }
+
+        return $row;
+    }
+
     function get_products_count($row)
     {
         $shop = $row['shop_domain'];
