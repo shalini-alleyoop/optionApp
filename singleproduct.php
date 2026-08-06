@@ -5,6 +5,10 @@ start_session_once();
 require_https();
 redirect_if_no_shopify_context();
 
+if (empty($_SESSION['rules_csv_csrf'])) {
+    $_SESSION['rules_csv_csrf'] = bin2hex(random_bytes(32));
+}
+
 $hw_token = $_GET['hw_token'] ?? '';
 $productId = $_GET['productId'] ?? '';
 $previewurl = $_GET['previewurl'] ?? '';
@@ -128,12 +132,33 @@ if ($row) {
 				</div>
             </div>
             <div class="prdtabs-content prd-rules hidden" id="prdRules">
+				<?php if (!empty($_GET['csv_status'])): ?>
+					<div class="rules-csv-message <?= ($_GET['csv_status'] === 'success') ? 'success' : 'error' ?>"><?= htmlspecialchars($_GET['csv_message'] ?? '', ENT_QUOTES, 'UTF-8') ?></div>
+				<?php endif; ?>
 				<div class="prd-rules-header">
 					<div class="prd-rules-filter-row">
 						<input type="text" id="rulesFilterInput" class="rules-filter-input" placeholder="Filter rules (e.g. medium, 10mm, medium 10mm)…" autocomplete="off">
 						<span id="rulesFilterCount" class="rules-filter-count"></span>
 					</div>
-					<button class="add-rule-btn" data-product-id="<?= $singleproduct ?>">+ Add New Rule</button>
+					<div class="rules-csv-actions">
+						<a class="rules-csv-btn" href="rules-csv.php?action=export&amp;productId=<?= urlencode($productId) ?>&amp;shop=<?= urlencode($shop) ?>">Export CSV</a>
+						<form method="post" action="rules-csv.php?shop=<?= urlencode($shop) ?>" enctype="multipart/form-data" class="rules-import-form" onsubmit="return confirm('Replace all pricing rules for this product with the rules in this CSV? Other products will not be changed.');">
+							<input type="hidden" name="action" value="import">
+							<input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['rules_csv_csrf'], ENT_QUOTES, 'UTF-8') ?>">
+							<input type="hidden" name="productId" value="<?= htmlspecialchars($productId, ENT_QUOTES, 'UTF-8') ?>">
+							<input type="hidden" name="previewurl" value="<?= htmlspecialchars($previewurl, ENT_QUOTES, 'UTF-8') ?>">
+							<input type="file" name="rules_csv" accept=".csv,text/csv" required onchange="this.form.requestSubmit()">
+							<button type="button" class="rules-csv-btn import" onclick="this.previousElementSibling.click()">Import CSV</button>
+						</form>
+						<form method="post" action="rules-csv.php?shop=<?= urlencode($shop) ?>" class="rules-import-form" style="display:none;" onsubmit="return confirm('Undo the last CSV import and restore the previous pricing rules for this product?');">
+							<input type="hidden" name="action" value="undo">
+							<input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['rules_csv_csrf'], ENT_QUOTES, 'UTF-8') ?>">
+							<input type="hidden" name="productId" value="<?= htmlspecialchars($productId, ENT_QUOTES, 'UTF-8') ?>">
+							<input type="hidden" name="previewurl" value="<?= htmlspecialchars($previewurl, ENT_QUOTES, 'UTF-8') ?>">
+							<button type="submit" class="rules-csv-btn undo">Undo Last Import</button>
+						</form>
+						<button class="add-rule-btn" data-product-id="<?= $singleproduct ?>">+ Add New Rule</button>
+					</div>
 				</div>
                 <?= $product_rules["html"] ?>
             </div>
@@ -187,6 +212,7 @@ if ($row) {
 	  <div class="spinner" style="width:40px;height:40px;border-radius:50%;border:4px solid #ccc;border-top-color:#007bff;animation:spin 1s linear infinite;"></div>
 	</div>
 	<style>
+	.rules-csv-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.rules-import-form{margin:0}.rules-import-form input[type=file]{display:none}.rules-csv-btn{display:inline-block;border:1px solid #1976d2;background:#fff;color:#1976d2;padding:8px 13px;border-radius:5px;text-decoration:none;font:inherit;cursor:pointer}.rules-csv-btn.import{background:#1976d2;color:#fff}.rules-csv-btn.undo{border-color:#6b7280;color:#374151}.rules-csv-message{margin-bottom:12px;padding:11px 14px;border-radius:5px}.rules-csv-message.success{background:#e8f5e9;color:#245b28;border:1px solid #9ccc9c}.rules-csv-message.error{background:#ffebee;color:#9b1c1c;border:1px solid #ef9a9a}
 	@keyframes spin { to { transform: rotate(360deg); } }
 	.menu-popup { display:inline-block; margin-left:10px; }
 	.menu-popup .menu-item {
