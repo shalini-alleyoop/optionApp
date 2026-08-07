@@ -141,8 +141,9 @@ if ($row) {
 						<span id="rulesFilterCount" class="rules-filter-count"></span>
 					</div>
 					<div class="rules-csv-actions">
+						<a class="rules-csv-btn" href="rules-csv.php?action=export_options&amp;productId=<?= urlencode($productId) ?>&amp;shop=<?= urlencode($shop) ?>">Download Product Options</a>
 						<a class="rules-csv-btn" href="rules-csv.php?action=export&amp;productId=<?= urlencode($productId) ?>&amp;shop=<?= urlencode($shop) ?>">Export CSV</a>
-						<form method="post" action="rules-csv.php?shop=<?= urlencode($shop) ?>" enctype="multipart/form-data" class="rules-import-form" onsubmit="return confirm('Replace all pricing rules for this product with the rules in this CSV? Other products will not be changed.');">
+						<form method="post" action="rules-csv.php?shop=<?= urlencode($shop) ?>" enctype="multipart/form-data" class="rules-import-form" onsubmit="return confirm('Synchronize pricing rules for this product from this CSV? Existing IDs will update, blank/0 IDs will be added, and omitted IDs will be deleted.');">
 							<input type="hidden" name="action" value="import">
 							<input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['rules_csv_csrf'], ENT_QUOTES, 'UTF-8') ?>">
 							<input type="hidden" name="productId" value="<?= htmlspecialchars($productId, ENT_QUOTES, 'UTF-8') ?>">

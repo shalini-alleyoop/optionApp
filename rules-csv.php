@@ -35,7 +35,24 @@ $product = $admin->get_row("SELECT product_id,shopify_product_id,name FROM bg_pr
 if (!$product) { http_response_code(404); exit('Product not found.'); }
 $productId = (int)$product['product_id'];
 
-$columns = ['id','product_id','shopify_product_id','rule_id','sort_order','is_enabled','is_stop','adjuster','adjuster_value','is_purchasing_disabled','purchasing_disabled_message','is_purchasing_hidden','image_file','conditions','conditions_json','raw'];
+$columns = ['id','sort_order','is_enabled','adjuster','adjuster_value','conditions_json'];
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'export_options') {
+    $options=$admin->get_results("SELECT o.display_name AS option_name,ov.label AS option_value FROM bg_product_options po JOIN bg_options o ON o.option_id=po.option_id JOIN bg_option_values ov ON ov.option_id=o.option_id WHERE po.product_id='$productId' AND o.status='1' AND ov.status='1' AND (po.options_values IS NULL OR po.options_values='' OR FIND_IN_SET(ov.option_value_id,po.options_values)) ORDER BY po.sort_order ASC,ov.sort_order ASC,ov.option_value_id ASC");
+    $filename=trim(preg_replace('/[^a-z0-9]+/i','-',$product['name']),'-');
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="product-options-'.$filename.'.csv"');
+    header('X-Content-Type-Options: nosniff');
+    $out=fopen('php://output','wb');fwrite($out,"\xEF\xBB\xBF");fputcsv($out,['option_name','option_value']);
+    $seen=[];
+    foreach($options as $option){
+        $key=$option['option_name']."\0".$option['option_value'];
+        if(isset($seen[$key]))continue;
+        $seen[$key]=true;
+        fputcsv($out,[$option['option_name'],$option['option_value']]);
+    }
+    fclose($out);exit;
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'export') {
     $rules = $admin->get_results("SELECT * FROM bg_product_rules_extract WHERE product_id='$productId' ORDER BY sort_order ASC,id ASC");
@@ -45,14 +62,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'export'
     header('X-Content-Type-Options: nosniff');
     $out=fopen('php://output','wb'); fwrite($out,"\xEF\xBB\xBF"); fputcsv($out,$columns);
     foreach ($rules as $rule) {
-        $conditions=json_decode($rule['conditions_json'],true) ?: []; $labels=[];
+        $conditions=json_decode($rule['conditions_json'],true) ?: []; $readableConditions=[];
         foreach ($conditions as $condition) {
-            $oid=(int)($condition['option_id']??0); $vid=(int)($condition['option_value_id']??0);
-            $label=$admin->get_row("SELECT o.display_name,v.label FROM bg_options o JOIN bg_option_values v ON v.option_id=o.option_id WHERE o.option_id='$oid' AND v.option_value_id='$vid' LIMIT 1");
-            if($label)$labels[]=$label['display_name'].': '.$label['label'];
+            $productOptionId=(int)($condition['product_option_id']??0); $valueId=(int)($condition['option_value_id']??0);
+            $label=$admin->get_row("SELECT o.display_name,v.label FROM bg_product_options po JOIN bg_options o ON o.option_id=po.option_id JOIN bg_option_values v ON v.option_id=o.option_id WHERE po.product_id='$productId' AND po.product_option_id='$productOptionId' AND v.option_value_id='$valueId' LIMIT 1");
+            if(!$label){
+                $optionId=(int)($condition['option_id']??0);
+                $label=$admin->get_row("SELECT o.display_name,v.label FROM bg_product_options po JOIN bg_options o ON o.option_id=po.option_id JOIN bg_option_values v ON v.option_id=o.option_id WHERE po.product_id='$productId' AND o.option_id='$optionId' AND v.option_value_id='$valueId' LIMIT 1");
+            }
+            if($label){
+                $optionName=(string)$label['display_name'];
+                if(!isset($readableConditions[$optionName]))$readableConditions[$optionName]=[];
+                if(!in_array($label['label'],$readableConditions[$optionName],true))$readableConditions[$optionName][]=$label['label'];
+            }
         }
-        $labelText=implode(' | ',$labels); if(preg_match('/^[=+\-@]/',$labelText))$labelText="'".$labelText;
-        fputcsv($out,[(int)$rule['id'],$productId,$shopifyId,$rule['rule_id']??'',(int)$rule['sort_order'],$rule['is_enabled']??'false',$rule['is_stop']??'false',$rule['adjuster']??'',$rule['adjuster_value']??'',$rule['is_purchasing_disabled']??'false',$rule['purchasing_disabled_message']??'',$rule['is_purchasing_hidden']??'false',$rule['image_file']??'',$labelText,json_encode($conditions,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES),$rule['raw']??'{}']);
+        fputcsv($out,[(int)$rule['id'],(int)$rule['sort_order'],$rule['is_enabled']??'false',$rule['adjuster']??'',$rule['adjuster_value']??'',json_encode($readableConditions,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES)]);
     }
     fclose($out); exit;
 }
@@ -90,12 +114,17 @@ if(empty($_FILES['rules_csv'])||$_FILES['rules_csv']['error']!==UPLOAD_ERR_OK||!
 if($_FILES['rules_csv']['size']<1||$_FILES['rules_csv']['size']>2097152)rules_redirect($shop,$shopifyId,$preview,'error','CSV must be between 1 byte and 2 MB.');
 if(strtolower(pathinfo($_FILES['rules_csv']['name'],PATHINFO_EXTENSION))!=='csv')rules_redirect($shop,$shopifyId,$preview,'error','Only CSV files are accepted.');
 
-$handle=fopen($_FILES['rules_csv']['tmp_name'],'rb'); $header=fgetcsv($handle);
+$handle=fopen($_FILES['rules_csv']['tmp_name'],'rb');
+$firstLine=fgets($handle);
+if($firstLine===false)import_error($admin,false,$handle,$shop,$shopifyId,$preview,'CSV is empty.');
+$delimiter=substr_count($firstLine,"\t")>substr_count($firstLine,',')?"\t":',';
+rewind($handle);
+$header=fgetcsv($handle,0,$delimiter);
 if($header&&isset($header[0]))$header[0]=preg_replace('/^\xEF\xBB\xBF/','',$header[0]);
 if($header!==$columns)import_error($admin,false,$handle,$shop,$shopifyId,$preview,'Invalid columns. Export a fresh CSV from this product.');
 
 $rows=[]; $seenIds=[]; $skippedNew=0; $line=1;
-while(($csv=fgetcsv($handle))!==false){
+while(($csv=fgetcsv($handle,0,$delimiter))!==false){
     $line++; if(count($csv)===1&&trim((string)$csv[0])==='')continue;
     if(count($csv)!==count($columns))import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line has the wrong number of columns.");
     $row=array_combine($columns,$csv);
@@ -105,22 +134,18 @@ while(($csv=fgetcsv($handle))!==false){
     $id=(int)$idText;
     if($id>0&&isset($seenIds[$id]))import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Rule ID $id appears more than once.");
     if($id>0)$seenIds[$id]=true;
-    if((int)$row['product_id']!==$productId||trim($row['shopify_product_id'])!==$shopifyId)import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line belongs to a different product.");
-    $newRequired=['sort_order','is_enabled','is_stop','adjuster','adjuster_value','is_purchasing_disabled','is_purchasing_hidden','conditions_json'];
+    $newRequired=['sort_order','is_enabled','adjuster','adjuster_value','conditions_json'];
     $newMissing=false;
     if($id===0)foreach($newRequired as $requiredColumn)if(trim((string)$row[$requiredColumn])===''){$newMissing=true;break;}
     if($newMissing){$skippedNew++;continue;}
     if(!preg_match('/^-?[0-9]+$/',trim($row['sort_order'])))import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line has an invalid sort order.");
     $enabled=csv_bool($row['is_enabled'],$valid); if(!$valid)import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line has an invalid enabled value.");
-    $stopped=csv_bool($row['is_stop'],$valid); if(!$valid)import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line has an invalid stop value.");
-    $disabled=csv_bool($row['is_purchasing_disabled'],$valid); if(!$valid)import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line has an invalid purchasing-disabled value.");
-    $hidden=csv_bool($row['is_purchasing_hidden'],$valid); if(!$valid)import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line has an invalid purchasing-hidden value.");
     $adjuster=strtolower(trim($row['adjuster']));
-    if(!in_array($adjuster,['','relative','percentage','absolute'],true)||($row['adjuster_value']!==''&&!is_numeric($row['adjuster_value'])))import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line has an invalid adjustment.");
+    if(!in_array($adjuster,['relative','percentage','absolute'],true)||!is_numeric($row['adjuster_value'])||!is_finite((float)$row['adjuster_value']))import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line has an invalid adjustment.");
     $conditions=json_decode($row['conditions_json'],true);
     if(!is_array($conditions)||!$conditions)import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line has invalid or empty conditions JSON.");
-    if(count($conditions)>500)import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line has too many conditions.");
-    $row['_id']=$id;$row['_enabled']=$enabled;$row['_stopped']=$stopped;$row['_disabled']=$disabled;$row['_hidden']=$hidden;$row['_adjuster']=$adjuster;$row['_conditions']=$conditions;
+    if(count($conditions)>2)import_error($admin,false,$handle,$shop,$shopifyId,$preview,"Line $line has more than two option groups.");
+    $row['_line']=$line;$row['_id']=$id;$row['_enabled']=$enabled;$row['_adjuster']=$adjuster;$row['_conditions']=$conditions;
     $rows[]=$row; if(count($rows)>10000)import_error($admin,false,$handle,$shop,$shopifyId,$preview,'CSV contains too many rules.');
 }
 fclose($handle);
@@ -134,13 +159,25 @@ foreach($seenIds as $id=>$unused)if(!isset($currentById[$id]))import_error($admi
 $normalizedRows=[];
 foreach($rows as $index=>$row){
     $normalized=[];$seenValues=[];
-    foreach($row['_conditions'] as $condition){
-        $valueId=(int)($condition['option_value_id']??0);
-        if(!$valueId||isset($seenValues[$valueId]))import_error($admin,true,null,$shop,$shopifyId,$preview,'A rule contains an invalid or duplicate option value.');
-        $seenValues[$valueId]=true;
-        $valid=$admin->get_row("SELECT po.product_option_id,ov.option_id FROM bg_product_options po JOIN bg_option_values ov ON ov.option_id=po.option_id WHERE po.product_id='$productId' AND ov.option_value_id='$valueId' AND ov.status='1' AND (po.options_values IS NULL OR po.options_values='' OR FIND_IN_SET(ov.option_value_id,po.options_values)) LIMIT 1");
-        if(!$valid)import_error($admin,true,null,$shop,$shopifyId,$preview,"Option value $valueId is not active and assigned to this product.");
-        $normalized[]=['product_option_id'=>$valid['product_option_id'],'option_id'=>$valid['option_id'],'option_value_id'=>$valueId,'sku_id'=>null];
+    foreach($row['_conditions'] as $optionName=>$valueNames){
+        $optionName=trim((string)$optionName);
+        if($optionName===''||!is_array($valueNames)||!$valueNames)import_error($admin,true,null,$shop,$shopifyId,$preview,"Line {$row['_line']} has an invalid option group.");
+        $safeOptionName=$admin->escape($optionName);
+        $optionMatches=$admin->get_results("SELECT po.product_option_id,po.option_id FROM bg_product_options po JOIN bg_options o ON o.option_id=po.option_id WHERE po.product_id='$productId' AND o.display_name='$safeOptionName'");
+        if(count($optionMatches)!==1)import_error($admin,true,null,$shop,$shopifyId,$preview,"Line {$row['_line']}: option '$optionName' is missing or ambiguous for this product.");
+        $productOption=$optionMatches[0];
+        foreach($valueNames as $valueName){
+            if(!is_string($valueName)||trim($valueName)==='')import_error($admin,true,null,$shop,$shopifyId,$preview,"Line {$row['_line']} has an empty option value.");
+            $valueName=trim($valueName);$safeValueName=$admin->escape($valueName);$optionId=(int)$productOption['option_id'];
+            $valueMatches=$admin->get_results("SELECT option_value_id FROM bg_option_values WHERE option_id='$optionId' AND label='$safeValueName' AND status='1'");
+            if(count($valueMatches)!==1)import_error($admin,true,null,$shop,$shopifyId,$preview,"Line {$row['_line']}: value '$valueName' for '$optionName' is missing or ambiguous.");
+            $valueId=(int)$valueMatches[0]['option_value_id'];
+            $assignment=$admin->get_row("SELECT product_option_id FROM bg_product_options WHERE product_id='$productId' AND product_option_id='".(int)$productOption['product_option_id']."' AND (options_values IS NULL OR options_values='' OR FIND_IN_SET('$valueId',options_values)) LIMIT 1");
+            if(!$assignment)import_error($admin,true,null,$shop,$shopifyId,$preview,"Line {$row['_line']}: value '$valueName' is not enabled for this product.");
+            if(isset($seenValues[$valueId]))import_error($admin,true,null,$shop,$shopifyId,$preview,"Line {$row['_line']} contains a duplicate option value.");
+            $seenValues[$valueId]=true;
+            $normalized[]=['product_option_id'=>$productOption['product_option_id'],'option_id'=>$optionId,'option_value_id'=>$valueId,'sku_id'=>null];
+        }
     }
     $row['_json']=json_encode($normalized);$normalizedRows[]=$row;
 }
@@ -155,9 +192,9 @@ if($keepIds)$deleteSql.=' AND id NOT IN ('.implode(',',array_map('intval',$keepI
 $ok=$admin->query($deleteSql);
 foreach($normalizedRows as $row){
     if(!$ok)break;
-    $fields="rule_id=".sql_value($admin,$row['rule_id'],true).",sort_order=".(int)$row['sort_order'].",is_enabled=".sql_value($admin,$row['_enabled']).",is_stop=".sql_value($admin,$row['_stopped']).",adjuster=".sql_value($admin,$row['_adjuster'],true).",adjuster_value=".sql_value($admin,$row['adjuster_value'],true).",is_purchasing_disabled=".sql_value($admin,$row['_disabled']).",purchasing_disabled_message=".sql_value($admin,$row['purchasing_disabled_message']).",is_purchasing_hidden=".sql_value($admin,$row['_hidden']).",image_file=".sql_value($admin,$row['image_file'],true).",conditions_json=".sql_value($admin,$row['_json']).",raw=".sql_value($admin,$row['raw']===''?'{}':$row['raw']);
+    $fields="sort_order=".(int)$row['sort_order'].",is_enabled=".sql_value($admin,$row['_enabled']).",adjuster=".sql_value($admin,$row['_adjuster']).",adjuster_value=".sql_value($admin,$row['adjuster_value']).",conditions_json=".sql_value($admin,$row['_json']);
     if($row['_id']>0)$ok=$admin->query("UPDATE bg_product_rules_extract SET $fields WHERE id=".$row['_id']." AND product_id='$productId'");
-    else $ok=$admin->query("INSERT INTO bg_product_rules_extract SET product_id='$productId',$fields");
+    else $ok=$admin->query("INSERT INTO bg_product_rules_extract SET product_id='$productId',is_stop='false',is_purchasing_disabled='false',purchasing_disabled_message='',is_purchasing_hidden='false',raw='{}',$fields");
     if(!$ok)break;
 }
 $admin->query($ok?'COMMIT':'ROLLBACK');
