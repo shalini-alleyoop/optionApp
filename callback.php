@@ -45,7 +45,8 @@ if (INSTALL_SCRIPT_TAG) {
 
 if (REGISTER_WEBHOOKS_ON_INSTALL) {
     $webhookUrl = APP_URL . '/webhook_handler.php';
-    foreach (WEBHOOK_TOPICS as $topic) {
+    $requiredWebhookTopics = array_unique(array_merge(WEBHOOK_TOPICS, ['orders/create', 'orders/cancelled']));
+    foreach ($requiredWebhookTopics as $topic) {
         $payload = [
             'webhook' => [
                 'topic'   => $topic,

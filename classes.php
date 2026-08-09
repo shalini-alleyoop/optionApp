@@ -220,7 +220,8 @@ class Admin extends DB
         $row = $this->get_row("SELECT * FROM bg_options WHERE option_id='$optionId'");
 
         if ($row) {
-            $optionValues = $this->get_results("SELECT * FROM bg_option_values WHERE option_id='$optionId' AND status='1' ORDER BY sort_order ASC");
+            $shopDomain = defined('SHOPIFY_ALLOWED_SHOP') ? $this->escape(SHOPIFY_ALLOWED_SHOP) : '';
+            $optionValues = $this->get_results("SELECT v.*, m.shopify_product_id, m.shopify_variant_id, m.inventory_item_id, m.location_id, m.product_title AS connected_product_title, m.variant_title AS connected_variant_title, m.sku AS connected_sku FROM bg_option_values v LEFT JOIN option_value_shopify_products m ON m.option_value_id=v.option_value_id AND m.shop_domain='$shopDomain' WHERE v.option_id='$optionId' AND v.status='1' ORDER BY v.sort_order ASC");
             echo json_encode([
                 "success" => true,
                 "data" => [
@@ -562,7 +563,7 @@ class Admin extends DB
                                         $imageHtml = "<img src='$image' alt=''>";
                                     }
                                     $defaultClass = ($value['is_default'] == 1) ? ' active' : '';
-                                    $html .= "<div class='option{$defaultClass}' data-value='{$val}'>$imageHtml<span>{$val}</span></div>";
+                                    $html .= "<div class='option{$defaultClass}' data-value='{$val}' data-optionvalueid='" . (int)$value['option_value_id'] . "'>$imageHtml<span>{$val}</span></div>";
                                 }
 
                                 $html .= "  </div></div></div>";

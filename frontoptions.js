@@ -1,5 +1,6 @@
 (function () {
-    const ENDPOINT = `https://apps.royalhawaiianheritage.com/process.php?domain=${Shopify.shop}`;
+	const ENDPOINT = `https://apps.royalhawaiianheritage.com/process.php?domain=${Shopify.shop}`;
+    const INVENTORY_ENDPOINT = 'https://apps.royalhawaiianheritage.com/validate-option-inventory.php';
 
     async function loadEngravingInstructions() {
         const accordion = document.querySelector('.engraving-instructions');
@@ -121,6 +122,20 @@
         }).filter(Boolean);
     }
 
+    function syncOptionValueIds(optionsParent) {
+        const ids = collectOptions(optionsParent).map(option => option.option_value_id).filter(Boolean);
+        const form = addToCartButton.closest('form');
+        if (!form) return;
+        let field = form.querySelector('input[name="properties[_Option Value IDs]"]');
+        if (!field) {
+            field = document.createElement('input');
+            field.type = 'hidden';
+            field.name = 'properties[_Option Value IDs]';
+            form.appendChild(field);
+        }
+        field.value = [...new Set(ids)].join(',');
+    }
+
     function handleOptionChange(e) {
         const optionsParent = e.target.closest('[data-customproductoptions]');
         if (!optionsParent) return;
@@ -128,6 +143,7 @@
         // const productPrice = optionsParent.dataset.productprice;
         const productPrice = productPriceEl.dataset.price;
         const options = collectOptions(optionsParent);
+        syncOptionValueIds(optionsParent);
         updatePrice(productId, productPrice, options);
     }
 
@@ -137,6 +153,31 @@
         optionsParent.querySelectorAll('select, [type="radio"]').forEach(el => {
             el.addEventListener('change', handleOptionChange);
         });
+        syncOptionValueIds(optionsParent);
+        applyInventoryAvailability(optionsParent);
+    }
+
+    async function applyInventoryAvailability(optionsParent) {
+        const ids = [...new Set(Array.from(optionsParent.querySelectorAll('[data-optionvalueid]')).map(el => el.dataset.optionvalueid).filter(Boolean))];
+        if (!ids.length) return;
+        try {
+            const response = await fetch(INVENTORY_ENDPOINT, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({shop:Shopify.shop, availability_check:true, lines:ids.map(id => ({key:'option-'+id, quantity:1, option_value_ids:[id]}))})});
+            const result = await response.json();
+            const unavailable = new Map((result.errors || []).map(error => [String(error.option_value_id), error.message]));
+            unavailable.forEach((message, id) => {
+                optionsParent.querySelectorAll(`[data-optionvalueid="${CSS.escape(id)}"]`).forEach(el => {
+                    if (el.matches('input,option')) el.disabled = true;
+                    el.dataset.inventoryDisabled = '1'; el.title = message; el.style.opacity = '.35';
+                    if (el.matches('.option')) el.style.pointerEvents = 'none';
+                    if (el.matches('input[type="radio"]')) {
+                        const label = optionsParent.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                        if (label) { label.style.opacity='.35'; label.style.cursor='not-allowed'; label.title=message; }
+                        if (el.checked) el.checked=false;
+                    }
+                });
+            });
+            syncOptionValueIds(optionsParent);
+        } catch (error) { console.warn('Unable to refresh connected option inventory.', error); }
     }
 
     const INLINE_OPTIONS_CSS = `

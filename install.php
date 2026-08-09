@@ -14,9 +14,12 @@ if (SHOPIFY_ALLOWED_SHOP && $shop !== SHOPIFY_ALLOWED_SHOP) {
 
 $redirectUri = APP_URL . '/callback.php';
 
+$configuredScopes = array_filter(array_map('trim', explode(',', SHOPIFY_SCOPES)));
+$requiredScopes = ['read_products', 'read_inventory', 'write_inventory', 'read_orders', 'read_locations'];
+$scopes = implode(',', array_unique(array_merge($configuredScopes, $requiredScopes)));
+
 $params = [
     'client_id'    => SHOPIFY_API_KEY,
-    'scope'        => SHOPIFY_SCOPES,
     'redirect_uri' => $redirectUri,
     // 'state' => bin2hex(random_bytes(16)), // optional anti-CSRF
 ];

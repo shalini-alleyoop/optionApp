@@ -1,3 +1,7 @@
 *.php
 !engraving-editor.php
 !rules-csv.php
+!option_inventory.php
+!option-products.php
+!validate-option-inventory.php
+!option-checkout-validation.js

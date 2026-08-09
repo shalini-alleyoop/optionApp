@@ -14,6 +14,76 @@ if (in_array($origin, $allowed_origins)) {
 header("Access-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE");
 header("Access-Control-Allow-Headers: Content-Type, Access-Control-Allow-Headers, X-Requested-With");
 require_once __DIR__ . '/helpers.php';
+
+// Shopify order-cancellation webhook endpoint:
+// process.php?action=cancel_order&domain={shop}.myshopify.com
+// This must run before the normal storefront/session initialization below.
+if (($_GET['action'] ?? '') === 'cancel_order') {
+    require_once __DIR__ . '/db.php';
+    require_once __DIR__ . '/option_inventory.php';
+
+    header('Content-Type: text/plain; charset=utf-8');
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        http_response_code(405);
+        header('Allow: POST');
+        exit('POST required');
+    }
+
+    $body = file_get_contents('php://input');
+    $hmac = $_SERVER['HTTP_X_SHOPIFY_HMAC_SHA256'] ?? '';
+    $headerShop = normalize_shop_domain((string)($_SERVER['HTTP_X_SHOPIFY_SHOP_DOMAIN'] ?? ''));
+    $urlShop = normalize_shop_domain((string)($_GET['domain'] ?? ''));
+    $topic = (string)($_SERVER['HTTP_X_SHOPIFY_TOPIC'] ?? '');
+    $webhookId = trim((string)($_SERVER['HTTP_X_SHOPIFY_WEBHOOK_ID'] ?? ''));
+
+    if (!verify_webhook($body, SHOPIFY_API_SECRET, $hmac)) {
+        http_response_code(401);
+        exit('Invalid webhook HMAC');
+    }
+    if ($headerShop !== $urlShop || $urlShop !== SHOPIFY_ALLOWED_SHOP) {
+        http_response_code(403);
+        exit('Invalid shop');
+    }
+    if ($topic !== '' && $topic !== 'orders/cancelled') {
+        http_response_code(400);
+        exit('Invalid webhook topic');
+    }
+
+    try {
+        $payload = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+        if (empty($payload['id'])) throw new RuntimeException('Missing Shopify order ID.');
+
+        try {
+            $stmt = db()->prepare('INSERT INTO webhook_logs (shop_domain, topic, webhook_id, payload) VALUES (?, ?, ?, ?)');
+            $stmt->execute([$urlShop, 'orders/cancelled', $webhookId !== '' ? $webhookId : null, $body]);
+            $logId = (int)db()->lastInsertId();
+        } catch (PDOException $e) {
+            if ($webhookId === '' || $e->getCode() !== '23000') throw $e;
+            $existing = db()->prepare('SELECT id, processed FROM webhook_logs WHERE shop_domain=? AND webhook_id=? LIMIT 1');
+            $existing->execute([$urlShop, $webhookId]);
+            $log = $existing->fetch();
+            if ($log && $log['processed']) {
+                http_response_code(200);
+                exit('Already processed');
+            }
+            if (!$log) throw $e;
+            $logId = (int)$log['id'];
+        }
+
+        option_inventory_cancel_order($urlShop, $payload);
+        db()->prepare('UPDATE webhook_logs SET processed=1, processing_error=NULL WHERE id=?')->execute([$logId]);
+        http_response_code(200);
+        exit('Cancellation processed');
+    } catch (Throwable $e) {
+        if (!empty($logId)) {
+            db()->prepare('UPDATE webhook_logs SET processing_error=? WHERE id=?')->execute([$e->getMessage(), $logId]);
+        }
+        error_log('Cancellation webhook failed: ' . $e->getMessage());
+        http_response_code(500);
+        exit('Cancellation processing failed');
+    }
+}
+
 require_once __DIR__ . '/connect.php';
 start_session_once();
 require_https();

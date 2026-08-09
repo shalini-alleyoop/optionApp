@@ -329,8 +329,35 @@ $limit      = $response['per_page'] ?? 20;
 
 		  // ===== Add Option Elements =====
 		  const addOptionModal = document.getElementById("addOptionModal");
-		  const addOptionForm = document.getElementById("addOptionForm");
-		  let newDefaultSlotIndex = 0;
+			  const addOptionForm = document.getElementById("addOptionForm");
+			  let newDefaultSlotIndex = 0;
+              let optionOnlyProductsPromise = null;
+
+              function escapeHtml(value) {
+                return String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+              }
+
+              function loadOptionOnlyProducts() {
+                if (!optionOnlyProductsPromise) {
+                  optionOnlyProductsPromise = fetch(`option-products.php?action=search&shop=<?= rawurlencode($shop_domain) ?>`)
+                    .then(r => r.json()).then(data => {
+                      if (!data.success) throw new Error(data.message || 'Unable to load option products.');
+                      return data.items || [];
+                    });
+                }
+                return optionOnlyProductsPromise;
+              }
+
+              function fillProductSelectors(scope, products) {
+                scope.querySelectorAll('.option-product-select').forEach(select => {
+                  const current = select.dataset.current || '';
+                  select.innerHTML = '<option value="">No connected product</option>' + products.map(item => {
+                    const title = item.variant_title && item.variant_title !== 'Default Title' ? `${item.product_title} — ${item.variant_title}` : item.product_title;
+                    const stock = item.tracked ? 'inventory tracked' : 'inventory not tracked';
+                    return `<option value="${item.variant_id}" ${String(item.variant_id) === current ? 'selected' : ''}>${escapeHtml(title)}${item.sku ? ` [${escapeHtml(item.sku)}]` : ''} (${stock})</option>`;
+                  }).join('');
+                });
+              }
 
 		  // =============================
 		  // Open Edit Option Modal
@@ -371,7 +398,7 @@ $limit      = $response['per_page'] ?? 20;
 					const showDefaultRadios = (data.data.option.type === 'RT' || data.data.option.type === 'S');
 					const vals = data.data.values || [];
 					const defaultIdx = vals.findIndex(v => v.is_default == 1 || v.is_default === '1');
-					vals.forEach((val, idx) => {
+                        vals.forEach((val, idx) => {
 					  let defaultRadio = '';
 					  if (showDefaultRadios) {
 						const defChecked = (defaultIdx === -1 ? idx === 0 : idx === defaultIdx) ? 'checked' : '';
@@ -399,15 +426,19 @@ $limit      = $response['per_page'] ?? 20;
 						     <option value="remove" ${val.price_adjust === 'remove' ? 'selected' : ''}>- Remove</option>
 						   </select>
 						   <input type="number" step="0.01" min="0" name="existingprices[${val.option_value_id}]" value="${val.price ?? ''}" placeholder="Price (optional)" style="width:100px;" />
-						   <select name="existingpricetypes[${val.option_value_id}]" style="width:100px;">
+							   <select name="existingpricetypes[${val.option_value_id}]" style="width:100px;">
 						     <option value="relative" ${(!val.price_type || val.price_type === 'relative') ? 'selected' : ''}>$ Fixed</option>
 						     <option value="percentage" ${val.price_type === 'percentage' ? 'selected' : ''}>% Percent</option>
-						   </select>
-						   <input type="file" name="fileupload[${val.option_value_id}]" accept=".jpg, .jpeg, .png, .webp" />
+							   </select>
+							   <select class="option-product-select" data-option-value-id="${val.option_value_id}" data-current="${val.shopify_variant_id || ''}" style="min-width:260px;">
+							     <option value="">Loading option_only products…</option>
+							   </select>
+							   <input type="file" name="fileupload[${val.option_value_id}]" accept=".jpg, .jpeg, .png, .webp" />
 						   <button type="button" class="remove-value">❌</button>
 						 </div>`
 					  );
-					});
+						});
+                        loadOptionOnlyProducts().then(products => fillProductSelectors(optionValuesWrapper, products)).catch(err => alert(err.message));
 
 					// Add hidden option_id
 					let hiddenField = editOptionForm.querySelector("input[name='option_id']");
@@ -460,10 +491,11 @@ $limit      = $response['per_page'] ?? 20;
 				   <option value="remove">- Remove</option>
 				 </select>
 				 <input type="number" step="0.01" min="0" name="newprices[]" placeholder="Price (optional)" style="width:100px;" />
-				 <select name="newpricetypes[]" style="width:100px;">
+					 <select name="newpricetypes[]" style="width:100px;">
 				   <option value="relative">$ Fixed</option>
 				   <option value="percentage">% Percent</option>
-				 </select>
+					 </select>
+					 <span class="option-product-pending">Save this new value before connecting a product.</span>
 				  <input type="file" name="fileuploadnew[]" accept=".jpg, .jpeg, .png, .webp" />
 				 <button type="button" class="remove-value">❌</button>
 			   </div>`
@@ -475,7 +507,7 @@ $limit      = $response['per_page'] ?? 20;
 		  });
 
 		  // Remove value field
-		  optionValuesWrapper.addEventListener("click", function (e) {
+			  optionValuesWrapper.addEventListener("click", function (e) {
 			if (e.target.classList.contains("remove-value")) {
 			  e.target.closest(".option-value-row").remove();
 			}
@@ -515,6 +547,24 @@ $limit      = $response['per_page'] ?? 20;
 				pageLoader.style.display = "none";
 				alert("Error deleting option.");
 			  });
+
+              optionValuesWrapper.addEventListener('change', function (e) {
+                const select = e.target.closest('.option-product-select');
+                if (!select) return;
+                const oldValue = select.dataset.current || '';
+                select.disabled = true;
+                const body = new URLSearchParams({
+                  action: select.value ? 'connect' : 'disconnect',
+                  shop: '<?= htmlspecialchars($shop_domain, ENT_QUOTES) ?>',
+                  option_value_id: select.dataset.optionValueId,
+                  variant_id: select.value
+                });
+                fetch('option-products.php', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body})
+                  .then(r => r.json()).then(data => {
+                    if (!data.success) throw new Error(data.message || 'Connection failed.');
+                    select.dataset.current = select.value;
+                  }).catch(err => { select.value = oldValue; alert(err.message); }).finally(() => { select.disabled = false; });
+              });
 		  }
 
 		  document.addEventListener("click", function (e) {
