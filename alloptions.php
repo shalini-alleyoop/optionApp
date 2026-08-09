@@ -429,16 +429,18 @@ $limit      = $response['per_page'] ?? 20;
 						style="object-fit: cover; border: 1px solid #ccc; border-radius: 4px;"
 						/>
 						   <input type="text" name="existingvalues[${val.option_value_id}]" value="${val.value}" />
-						   <select name="existingpriceadjust[${val.option_value_id}]" style="width:115px;">
+							   <div class="price-controls" title="Price adjustment">
+							   <select name="existingpriceadjust[${val.option_value_id}]">
 						     <option value="add" ${(!val.price_adjust || val.price_adjust === 'add') ? 'selected' : ''}>+ Add</option>
 						     <option value="remove" ${val.price_adjust === 'remove' ? 'selected' : ''}>- Remove</option>
 						   </select>
-						   <input type="number" step="0.01" min="0" name="existingprices[${val.option_value_id}]" value="${val.price ?? ''}" placeholder="Price (optional)" style="width:100px;" />
-							   <select name="existingpricetypes[${val.option_value_id}]" style="width:100px;">
+							   <input type="number" step="0.01" min="0" name="existingprices[${val.option_value_id}]" value="${val.price ?? ''}" placeholder="Amount" />
+							   <select name="existingpricetypes[${val.option_value_id}]">
 						     <option value="relative" ${(!val.price_type || val.price_type === 'relative') ? 'selected' : ''}>$ Fixed</option>
 						     <option value="percentage" ${val.price_type === 'percentage' ? 'selected' : ''}>% Percent</option>
 							   </select>
-							   <select class="option-product-select" data-option-value-id="${val.option_value_id}" data-current="${val.shopify_variant_id || ''}" data-current-title="${escapeHtml(val.connected_product_title || '')}" data-current-variant="${escapeHtml(val.connected_variant_title || '')}" data-current-sku="${escapeHtml(val.connected_sku || '')}" style="min-width:260px;">
+							   </div>
+							   <select name="existingconnectedproducts[${val.option_value_id}]" class="option-product-select" data-option-value-id="${val.option_value_id}" data-current="${val.shopify_variant_id || ''}" data-current-title="${escapeHtml(val.connected_product_title || '')}" data-current-variant="${escapeHtml(val.connected_variant_title || '')}" data-current-sku="${escapeHtml(val.connected_sku || '')}">
 							     <option value="">Loading option_only products…</option>
 							   </select>
 							   <input type="file" name="fileupload[${val.option_value_id}]" accept=".jpg, .jpeg, .png, .webp" />
@@ -494,15 +496,17 @@ $limit      = $response['per_page'] ?? 20;
 								style="object-fit: cover; border: 1px solid #ccc; border-radius: 4px;"
 							/>
 				 <input type="text" name="values[]" placeholder="Enter value" />
-				 <select name="newpriceadjust[]" style="width:115px;">
+					 <div class="price-controls" title="Price adjustment">
+					 <select name="newpriceadjust[]">
 				   <option value="add">+ Add</option>
 				   <option value="remove">- Remove</option>
 				 </select>
-				 <input type="number" step="0.01" min="0" name="newprices[]" placeholder="Price (optional)" style="width:100px;" />
-					 <select name="newpricetypes[]" style="width:100px;">
+					 <input type="number" step="0.01" min="0" name="newprices[]" placeholder="Amount" />
+					 <select name="newpricetypes[]">
 				   <option value="relative">$ Fixed</option>
 				   <option value="percentage">% Percent</option>
 					 </select>
+					 </div>
 					 <span class="option-product-pending">Save this new value before connecting a product.</span>
 				  <input type="file" name="fileuploadnew[]" accept=".jpg, .jpeg, .png, .webp" />
 				 <button type="button" class="remove-value">❌</button>
@@ -556,23 +560,6 @@ $limit      = $response['per_page'] ?? 20;
 				alert("Error deleting option.");
 			  });
 
-              optionValuesWrapper.addEventListener('change', function (e) {
-                const select = e.target.closest('.option-product-select');
-                if (!select) return;
-                const oldValue = select.dataset.current || '';
-                select.disabled = true;
-                const body = new URLSearchParams({
-                  action: select.value ? 'connect' : 'disconnect',
-                  shop: '<?= htmlspecialchars($shop_domain, ENT_QUOTES) ?>',
-                  option_value_id: select.dataset.optionValueId,
-                  variant_id: select.value
-                });
-                fetch('option-products.php', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body})
-                  .then(r => r.json()).then(data => {
-                    if (!data.success) throw new Error(data.message || 'Connection failed.');
-                    select.dataset.current = select.value;
-                  }).catch(err => { select.value = oldValue; alert(err.message); }).finally(() => { select.disabled = false; });
-              });
 		  }
 
 		  document.addEventListener("click", function (e) {
@@ -606,14 +593,24 @@ $limit      = $response['per_page'] ?? 20;
 			  body: formData
 			})
 			  .then(res => res.json())
-			  .then(data => {
-				pageLoader.style.display = "none";
-				if (data.success) {
+				  .then(data => {
+					pageLoader.style.display = "none";
+					if (data.success) {
+					  const expectedConnections = {};
+					  editOptionForm.querySelectorAll('.option-product-select').forEach(select => {
+						expectedConnections[String(select.dataset.optionValueId)] = String(select.value || '');
+					  });
+					  const savedConnections = data.saved_connections || {};
+					  const notSaved = Object.keys(expectedConnections).filter(id => String(savedConnections[id] || '') !== expectedConnections[id]);
+					  if (notSaved.length) {
+						alert('The connected products were not saved. Please reload the App and try again.');
+						return;
+					  }
 				  alert("Option updated!");
 				  editOptionModal.style.display = "none";
 				  location.reload();
 				} else {
-				  alert("Update failed");
+					  alert(data.msg || "Update failed");
 				}
 			  })
 			  .catch(() => {
@@ -745,7 +742,7 @@ $limit      = $response['per_page'] ?? 20;
 
 			.option-value-row {
 			  display: grid;
-			  grid-template-columns: 26px 24px 52px minmax(150px, 1fr) 105px 110px 105px minmax(250px, 1.4fr) 150px 42px;
+			  grid-template-columns: 26px 24px 52px minmax(190px, 1fr) 300px minmax(300px, 1.25fr) 150px 42px;
 			  align-items: center;
 			  gap: 8px;
 			  padding: 10px;
@@ -777,6 +774,20 @@ $limit      = $response['per_page'] ?? 20;
 			.option-value-row .option-product-select {
 			  width: 100% !important;
 			  min-width: 0 !important;
+			}
+
+			.option-value-row .price-controls {
+			  display: grid;
+			  grid-template-columns: 92px minmax(90px, 1fr) 105px;
+			  gap: 6px;
+			  min-width: 0;
+			}
+
+			.option-value-row .price-controls input,
+			.option-value-row .price-controls select {
+			  width: 100%;
+			  min-width: 0;
+			  margin: 0;
 			}
 
 			.option-value-row input[type="file"] {

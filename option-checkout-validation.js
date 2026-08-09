@@ -19,9 +19,10 @@
   function showErrors(errors) {
     const box=errorBox(); box.innerHTML='<strong>Please update your options before checkout:</strong><ul style="margin:8px 0 0 18px">'+errors.map(e=>'<li>'+String(e.message||'An option is unavailable.').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))+'</li>').join('')+'</ul>';box.style.display='block';box.scrollIntoView({behavior:'smooth',block:'center'});
   }
+  function clearErrors() { document.querySelectorAll('[data-option-inventory-errors]').forEach(box => { box.style.display='none'; box.innerHTML=''; }); }
   function setBusy(busy) { document.querySelectorAll('button[name="checkout"],input[name="checkout"]').forEach(btn=>{btn.disabled=busy;btn.setAttribute('aria-busy',busy?'true':'false');}); }
   async function validateAndCheckout() {
-    if(validating)return;validating=true;setBusy(true);errorBox().style.display='none';
+    if(validating)return;validating=true;clearErrors();setBusy(true);
     try {
       const cartResponse=await fetch((window.Shopify&&Shopify.routes&&Shopify.routes.root||'/')+'cart.js',{credentials:'same-origin',headers:{Accept:'application/json'}});
       if(!cartResponse.ok)throw new Error('Unable to read the cart.');
@@ -37,5 +38,8 @@
   }
   document.addEventListener('click',function(event){const control=isCheckoutControl(event.target);if(!control)return;event.preventDefault();event.stopImmediatePropagation();validateAndCheckout();},true);
   document.addEventListener('submit',function(event){const submitter=event.submitter;if(submitter&&submitter.name==='checkout'){event.preventDefault();event.stopImmediatePropagation();validateAndCheckout();}},true);
+  document.addEventListener('theme:cart-drawer:open',clearErrors);
+  document.addEventListener('theme:cart-drawer:close',clearErrors);
+  document.addEventListener('theme:cart:change',clearErrors);
   document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.additional-checkout-buttons').forEach(el=>{el.style.display='none';el.setAttribute('aria-hidden','true');});});
 })();

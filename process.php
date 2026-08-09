@@ -84,6 +84,7 @@ if (($_GET['action'] ?? '') === 'cancel_order') {
     }
 }
 
+require_once __DIR__ . '/option_inventory.php';
 require_once __DIR__ . '/connect.php';
 start_session_once();
 require_https();

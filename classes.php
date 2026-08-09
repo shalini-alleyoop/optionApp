@@ -285,6 +285,30 @@ class Admin extends DB
         $option_id = $_POST["option_id"];
         $option_name = $_POST["option_name"];
         $front_label = $_POST["front_label"] ?? '';
+        $connectionUpdates = [];
+        try {
+            $shopDomain = SHOPIFY_ALLOWED_SHOP;
+            $shopRow = get_shop($shopDomain);
+            if (!$shopRow) throw new RuntimeException('Shop is not connected.');
+            foreach (($_POST['existingconnectedproducts'] ?? []) as $valueIdRaw => $variantIdRaw) {
+                $valueId = (int)$valueIdRaw;
+                $variantId = (int)$variantIdRaw;
+                $validValue = $this->get_row("SELECT option_value_id FROM bg_option_values WHERE option_value_id='$valueId' AND option_id='" . (int)$option_id . "' AND status='1' LIMIT 1");
+                if (!$validValue) throw new RuntimeException('Invalid option value connection.');
+                if (!$variantId) {
+                    $connectionUpdates[$valueId] = null;
+                    continue;
+                }
+                $existingMapping = db()->prepare('SELECT * FROM option_value_shopify_products WHERE shop_domain=? AND option_value_id=? AND shopify_variant_id=? LIMIT 1');
+                $existingMapping->execute([$shopDomain, $valueId, $variantId]);
+                $saved = $existingMapping->fetch();
+                $connectionUpdates[$valueId] = $saved ?: option_inventory_variant_state($shopDomain, $shopRow['access_token'], $variantId);
+            }
+        } catch (Throwable $e) {
+            http_response_code(422);
+            echo json_encode(['success' => false, 'msg' => $e->getMessage()]);
+            return;
+        }
         if (isset($_POST['engraving'])) {
             $this->query("Update bg_options SET `engraving` = 'Yes' WHERE option_id='$option_id'");
         } else {
@@ -359,6 +383,29 @@ class Admin extends DB
             }
         }
 
+        try {
+            foreach ($connectionUpdates as $valueId => $state) {
+                if ($state === null) {
+                    option_inventory_disconnect_missing($shopDomain, (int)$valueId);
+                    continue;
+                }
+                // Existing mapping rows already contain the same normalized fields.
+                $productId = (int)($state['product_id'] ?? $state['shopify_product_id']);
+                $variantId = (int)($state['variant_id'] ?? $state['shopify_variant_id']);
+                $inventoryItemId = (int)($state['inventory_item_id'] ?? 0);
+                $locationId = !empty($state['location_id']) ? (int)$state['location_id'] : null;
+                $productTitle = (string)($state['product_title'] ?? '');
+                $variantTitle = (string)($state['variant_title'] ?? '');
+                $sku = (string)($state['sku'] ?? '');
+                $stmt = db()->prepare('INSERT INTO option_value_shopify_products (shop_domain,option_value_id,shopify_product_id,shopify_variant_id,inventory_item_id,location_id,product_title,variant_title,sku) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE shopify_product_id=VALUES(shopify_product_id),shopify_variant_id=VALUES(shopify_variant_id),inventory_item_id=VALUES(inventory_item_id),location_id=VALUES(location_id),product_title=VALUES(product_title),variant_title=VALUES(variant_title),sku=VALUES(sku)');
+                $stmt->execute([$shopDomain, (int)$valueId, $productId, $variantId, $inventoryItemId, $locationId, $productTitle, $variantTitle, $sku]);
+            }
+        } catch (Throwable $e) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'msg' => 'Product connection was not saved: ' . $e->getMessage()]);
+            return;
+        }
+
         $option_id_int = (int)$option_id;
         $optTypeRow = $this->get_row("SELECT `type` FROM bg_options WHERE option_id='" . $option_id_int . "' LIMIT 1");
         $optType = $optTypeRow['type'] ?? '';
@@ -405,9 +452,16 @@ class Admin extends DB
             }
         }
 
-        echo json_encode([
-            "success" => true
-        ]);
+        $savedConnections = [];
+        if (!empty($_POST['existingconnectedproducts'])) {
+            $submittedIds = array_map('intval', array_keys($_POST['existingconnectedproducts']));
+            $marks = implode(',', array_fill(0, count($submittedIds), '?'));
+            $verify = db()->prepare("SELECT option_value_id, shopify_variant_id FROM option_value_shopify_products WHERE shop_domain=? AND option_value_id IN ($marks)");
+            $verify->execute(array_merge([$shopDomain], $submittedIds));
+            foreach ($verify->fetchAll() as $mapping) $savedConnections[(string)$mapping['option_value_id']] = (string)$mapping['shopify_variant_id'];
+            foreach ($submittedIds as $submittedId) if (!isset($savedConnections[(string)$submittedId])) $savedConnections[(string)$submittedId] = '';
+        }
+        echo json_encode(["success" => true, "saved_connections" => $savedConnections]);
     }
 
     function add_new_option()
