@@ -20,6 +20,7 @@ $scopes = implode(',', array_unique(array_merge($configuredScopes, $requiredScop
 
 $params = [
     'client_id'    => SHOPIFY_API_KEY,
+    'scope'        => $scopes,
     'redirect_uri' => $redirectUri,
     // 'state' => bin2hex(random_bytes(16)), // optional anti-CSRF
 ];
