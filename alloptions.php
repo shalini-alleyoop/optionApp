@@ -351,10 +351,18 @@ $limit      = $response['per_page'] ?? 20;
               function fillProductSelectors(scope, products) {
                 scope.querySelectorAll('.option-product-select').forEach(select => {
                   const current = select.dataset.current || '';
-                  select.innerHTML = '<option value="">No connected product</option>' + products.map(item => {
+                  const currentExists = products.some(item => String(item.variant_id) === current);
+                  let savedOption = '';
+                  if (current && !currentExists) {
+                    const savedTitle = select.dataset.currentTitle || 'Connected Shopify product';
+                    const savedVariant = select.dataset.currentVariant || '';
+                    const savedSku = select.dataset.currentSku || '';
+                    const label = savedVariant && savedVariant !== 'Default Title' ? `${savedTitle} — ${savedVariant}` : savedTitle;
+                    savedOption = `<option value="${escapeHtml(current)}" selected>${escapeHtml(label)}${savedSku ? ` [${escapeHtml(savedSku)}]` : ''}</option>`;
+                  }
+                  select.innerHTML = '<option value="">No connected product</option>' + savedOption + products.map(item => {
                     const title = item.variant_title && item.variant_title !== 'Default Title' ? `${item.product_title} — ${item.variant_title}` : item.product_title;
-                    const stock = item.tracked ? 'inventory tracked' : 'inventory not tracked';
-                    return `<option value="${item.variant_id}" ${String(item.variant_id) === current ? 'selected' : ''}>${escapeHtml(title)}${item.sku ? ` [${escapeHtml(item.sku)}]` : ''} (${stock})</option>`;
+                    return `<option value="${item.variant_id}" ${String(item.variant_id) === current ? 'selected' : ''}>${escapeHtml(title)}${item.sku ? ` [${escapeHtml(item.sku)}]` : ''}</option>`;
                   }).join('');
                 });
               }
@@ -430,7 +438,7 @@ $limit      = $response['per_page'] ?? 20;
 						     <option value="relative" ${(!val.price_type || val.price_type === 'relative') ? 'selected' : ''}>$ Fixed</option>
 						     <option value="percentage" ${val.price_type === 'percentage' ? 'selected' : ''}>% Percent</option>
 							   </select>
-							   <select class="option-product-select" data-option-value-id="${val.option_value_id}" data-current="${val.shopify_variant_id || ''}" style="min-width:260px;">
+							   <select class="option-product-select" data-option-value-id="${val.option_value_id}" data-current="${val.shopify_variant_id || ''}" data-current-title="${escapeHtml(val.connected_product_title || '')}" data-current-variant="${escapeHtml(val.connected_variant_title || '')}" data-current-sku="${escapeHtml(val.connected_sku || '')}" style="min-width:260px;">
 							     <option value="">Loading option_only products…</option>
 							   </select>
 							   <input type="file" name="fileupload[${val.option_value_id}]" accept=".jpg, .jpeg, .png, .webp" />
@@ -685,15 +693,15 @@ $limit      = $response['per_page'] ?? 20;
 		  overflow-y: auto; /* allow scrolling if modal taller than viewport */
 		}
 
-		.modal {
-		  background: #fff;
-		  border-radius: 8px;
-		  padding: 20px;
-		  width: 95%;
-		  max-width: 800px;
-		  max-height: 90vh; /* prevent overflowing off screen */
-		  overflow-y: auto; /* inner scroll */
-		  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+			.modal {
+			  background: #fff;
+			  border-radius: 8px;
+			  padding: 20px;
+			  width: 95%;
+			  max-width: 800px;
+			  max-height: 90vh; /* prevent overflowing off screen */
+			  overflow-y: auto; /* inner scroll */
+			  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
 			position: absolute;
 			bottom: 0;
 			top: 0;
@@ -735,11 +743,47 @@ $limit      = $response['per_page'] ?? 20;
 		  margin-bottom: 15px;
 		}
 
-		.option-value-row {
-		  display: flex;
-		  align-items: center;
-		  gap: 10px;
-		}
+			.option-value-row {
+			  display: grid;
+			  grid-template-columns: 26px 24px 52px minmax(150px, 1fr) 105px 110px 105px minmax(250px, 1.4fr) 150px 42px;
+			  align-items: center;
+			  gap: 8px;
+			  padding: 10px;
+			  background: #f8f9fa;
+			  border: 1px solid #e3e5e7;
+			  border-radius: 8px;
+			}
+
+			#editOptionModal .modal {
+			  width: min(96vw, 1440px);
+			  max-width: 1440px;
+			  max-height: 92vh;
+			  padding: 28px;
+			  border-radius: 12px;
+			}
+
+			.option-value-row > input,
+			.option-value-row > select,
+			.option-value-row > label,
+			.option-value-row > button {
+			  margin-bottom: 0;
+			}
+
+			.option-value-row .preview-image {
+			  width: 48px;
+			  height: 48px;
+			}
+
+			.option-value-row .option-product-select {
+			  width: 100% !important;
+			  min-width: 0 !important;
+			}
+
+			.option-value-row input[type="file"] {
+			  width: 150px;
+			  padding: 6px;
+			  font-size: 11px;
+			}
 
 		.default-value-radio {
 		  flex-shrink: 0;
@@ -755,8 +799,8 @@ $limit      = $response['per_page'] ?? 20;
 		  flex: none;
 		}
 
-		.option-value-row input {
-		  flex: 1;
+			.option-value-row input {
+			  min-width: 0;
 		  padding: 8px 10px;
 		  border: 1px solid #ccc;
 		  border-radius: 6px;
@@ -774,9 +818,15 @@ $limit      = $response['per_page'] ?? 20;
 		  transition: background 0.2s ease;
 		}
 
-		.option-value-row .remove-value:hover {
-		  background: #b02a37;
-		}
+			.option-value-row .remove-value:hover {
+			  background: #b02a37;
+			}
+
+			@media (max-width: 1100px) {
+			  #editOptionModal .modal { width: 98vw; padding: 20px; }
+			  #optionValuesWrapper { overflow-x: auto; padding-bottom: 6px; }
+			  .option-value-row { min-width: 1180px; }
+			}
 
 		/* Buttons */
 		.modal button {

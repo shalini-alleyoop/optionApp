@@ -24,8 +24,8 @@ try {
         $term = trim((string)($_GET['q'] ?? ''));
         $query = <<<'GQL'
 query OptionOnlyVariants($query: String!) {
-  productVariants(first: 100, query: $query) {
-    nodes { id title sku product { id title } inventoryItem { id tracked } }
+  productVariants(first: 50, query: $query) {
+    nodes { id title sku product { id title } }
   }
 }
 GQL;
@@ -35,7 +35,7 @@ GQL;
         $items=[];
         foreach (($data['productVariants']['nodes'] ?? []) as $variant) {
             $product = $variant['product'] ?? [];
-            $items[]=['product_id'=>(int)preg_replace('/\D+/','',$product['id']??''),'product_title'=>$product['title']??'','variant_id'=>(int)preg_replace('/\D+/','',$variant['id']),'variant_title'=>$variant['title'],'sku'=>$variant['sku']??'','inventory_item_id'=>(int)preg_replace('/\D+/','',$variant['inventoryItem']['id']??''),'tracked'=>!empty($variant['inventoryItem']['tracked'])];
+            $items[]=['product_id'=>(int)preg_replace('/\D+/','',$product['id']??''),'product_title'=>$product['title']??'','variant_id'=>(int)preg_replace('/\D+/','',$variant['id']),'variant_title'=>$variant['title'],'sku'=>$variant['sku']??''];
         }
         echo json_encode(['success'=>true,'items'=>$items]); exit;
     }
