@@ -167,9 +167,10 @@
             unavailable.forEach((message, id) => {
                 optionsParent.querySelectorAll(`[data-optionvalueid="${CSS.escape(id)}"]`).forEach(el => {
                     if (el.matches('input,option')) el.disabled = true;
-                    el.dataset.inventoryDisabled = '1'; el.title = message; el.style.opacity = '.35';
-                    if (el.matches('.option')) el.style.pointerEvents = 'none';
+                    el.dataset.inventoryDisabled = '1'; el.title = message;
+                    if (el.matches('.option')) { el.style.opacity = '.35'; el.style.pointerEvents = 'none'; }
                     if (el.matches('input[type="radio"]')) {
+                        el.style.opacity = '0';
                         const label = optionsParent.querySelector(`label[for="${CSS.escape(el.id)}"]`);
                         if (label) { label.style.opacity='.35'; label.style.cursor='not-allowed'; label.title=message; }
                         if (el.checked) el.checked=false;
