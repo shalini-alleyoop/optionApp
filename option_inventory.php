@@ -74,7 +74,7 @@ function option_inventory_adjust(string $shop, string $token, int $inventoryItem
 function option_inventory_mappings(string $shop, array $valueIds): array {
     if (!$valueIds) return [];
     $marks = implode(',', array_fill(0, count($valueIds), '?'));
-    $stmt = db()->prepare("SELECT m.*, v.option_id, v.label AS option_value, o.display_name AS option_title FROM option_value_shopify_products m JOIN bg_option_values v ON v.option_value_id=m.option_value_id JOIN bg_options o ON o.option_id=v.option_id WHERE m.shop_domain=? AND m.option_value_id IN ($marks)");
+    $stmt = db()->prepare("SELECT m.*, v.option_id, v.label AS option_value, o.display_name AS option_title FROM option_value_shopify_products m JOIN shopify_option_products sop ON sop.shop_domain=m.shop_domain AND sop.shopify_variant_id=m.shopify_variant_id AND sop.is_option_only=1 AND sop.deleted_at IS NULL JOIN bg_option_values v ON v.option_value_id=m.option_value_id JOIN bg_options o ON o.option_id=v.option_id WHERE m.shop_domain=? AND m.option_value_id IN ($marks)");
     $stmt->execute(array_merge([$shop], $valueIds));
     $out = []; foreach ($stmt->fetchAll() as $row) $out[(int)$row['option_value_id']] = $row;
     return $out;

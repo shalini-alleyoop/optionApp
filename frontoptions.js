@@ -150,7 +150,7 @@
     function bindOptionEvents(scope) {
         const optionsParent = scope.querySelector('[data-customproductoptions]');
         if (!optionsParent) return;
-        optionsParent.querySelectorAll('select, [type="radio"]').forEach(el => {
+        optionsParent.querySelectorAll('select, [type="radio"], [type="checkbox"]').forEach(el => {
             el.addEventListener('change', handleOptionChange);
         });
         syncOptionValueIds(optionsParent);
@@ -169,8 +169,8 @@
                     if (el.matches('input,option')) el.disabled = true;
                     el.dataset.inventoryDisabled = '1'; el.title = message;
                     if (el.matches('.option')) { el.style.opacity = '.35'; el.style.pointerEvents = 'none'; }
-                    if (el.matches('input[type="radio"]')) {
-                        el.style.opacity = '0';
+                    if (el.matches('input[type="radio"],input[type="checkbox"]')) {
+                        if (el.matches('input[type="radio"]')) el.style.opacity = '0';
                         const label = optionsParent.querySelector(`label[for="${CSS.escape(el.id)}"]`);
                         if (label) { label.style.opacity='.35'; label.style.cursor='not-allowed'; label.title=message; }
                         if (el.checked) el.checked=false;
@@ -624,13 +624,25 @@
 
                 // 1. Reset all previously condition-disabled states
                 groups.forEach(group => {
-                    group.querySelectorAll('input[type="radio"]').forEach(r => {
+                    group.querySelectorAll('input[type="radio"],input[type="checkbox"]').forEach(r => {
+                        if (r.dataset.inventoryDisabled === '1') {
+                            r.disabled = true;
+                            const inventoryLabel = group.querySelector('label[for="' + r.id + '"]');
+                            if (inventoryLabel) {
+                                inventoryLabel.style.opacity = '0.35';
+                                inventoryLabel.style.cursor = 'not-allowed';
+                                inventoryLabel.title = r.title || '';
+                            }
+                            return;
+                        }
                         r.disabled = false;
                         const label = group.querySelector('label[for="' + r.id + '"]');
                         if (label) { label.style.opacity = ''; label.style.cursor = ''; label.title = ''; }
                     });
                     const realSel = group.querySelector('.custom-select-hidden');
-                    if (realSel) Array.from(realSel.options).forEach(o => { if (o.value) o.disabled = false; });
+                    if (realSel) Array.from(realSel.options).forEach(o => {
+                        if (o.value && o.dataset.inventoryDisabled !== '1') o.disabled = false;
+                    });
                     const customSel = group.querySelector('.custom-select');
                     if (customSel) {
                         customSel.querySelectorAll('.option[data-cond-disabled]').forEach(d => {

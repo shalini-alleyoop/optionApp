@@ -221,7 +221,7 @@ class Admin extends DB
 
         if ($row) {
             $shopDomain = defined('SHOPIFY_ALLOWED_SHOP') ? $this->escape(SHOPIFY_ALLOWED_SHOP) : '';
-            $optionValues = $this->get_results("SELECT v.*, m.shopify_product_id, m.shopify_variant_id, m.inventory_item_id, m.location_id, m.product_title AS connected_product_title, m.variant_title AS connected_variant_title, m.sku AS connected_sku FROM bg_option_values v LEFT JOIN option_value_shopify_products m ON m.option_value_id=v.option_value_id AND m.shop_domain='$shopDomain' WHERE v.option_id='$optionId' AND v.status='1' ORDER BY v.sort_order ASC");
+            $optionValues = $this->get_results("SELECT v.*, m.shopify_product_id, m.shopify_variant_id, m.inventory_item_id, m.location_id, m.product_title AS connected_product_title, m.variant_title AS connected_variant_title, m.sku AS connected_sku FROM bg_option_values v LEFT JOIN option_value_shopify_products m ON m.option_value_id=v.option_value_id AND m.shop_domain='$shopDomain' AND EXISTS (SELECT 1 FROM shopify_option_products sop WHERE sop.shop_domain=m.shop_domain AND sop.shopify_variant_id=m.shopify_variant_id AND sop.is_option_only=1 AND sop.deleted_at IS NULL) WHERE v.option_id='$optionId' AND v.status='1' ORDER BY v.sort_order ASC");
             echo json_encode([
                 "success" => true,
                 "data" => [
@@ -299,7 +299,10 @@ class Admin extends DB
                     $connectionUpdates[$valueId] = null;
                     continue;
                 }
-                $existingMapping = db()->prepare('SELECT * FROM option_value_shopify_products WHERE shop_domain=? AND option_value_id=? AND shopify_variant_id=? LIMIT 1');
+                $available = db()->prepare('SELECT shopify_variant_id FROM shopify_option_products WHERE shop_domain=? AND shopify_variant_id=? AND is_option_only=1 AND deleted_at IS NULL LIMIT 1');
+                $available->execute([$shopDomain, $variantId]);
+                if (!$available->fetch()) throw new RuntimeException('The selected Shopify option product is no longer available. Reload the option and select again.');
+                $existingMapping = db()->prepare('SELECT m.* FROM option_value_shopify_products m JOIN shopify_option_products sop ON sop.shop_domain=m.shop_domain AND sop.shopify_variant_id=m.shopify_variant_id AND sop.is_option_only=1 AND sop.deleted_at IS NULL WHERE m.shop_domain=? AND m.option_value_id=? AND m.shopify_variant_id=? LIMIT 1');
                 $existingMapping->execute([$shopDomain, $valueId, $variantId]);
                 $saved = $existingMapping->fetch();
                 $connectionUpdates[$valueId] = $saved ?: option_inventory_variant_state($shopDomain, $shopRow['access_token'], $variantId);
@@ -456,7 +459,7 @@ class Admin extends DB
         if (!empty($_POST['existingconnectedproducts'])) {
             $submittedIds = array_map('intval', array_keys($_POST['existingconnectedproducts']));
             $marks = implode(',', array_fill(0, count($submittedIds), '?'));
-            $verify = db()->prepare("SELECT option_value_id, shopify_variant_id FROM option_value_shopify_products WHERE shop_domain=? AND option_value_id IN ($marks)");
+            $verify = db()->prepare("SELECT m.option_value_id, m.shopify_variant_id FROM option_value_shopify_products m JOIN shopify_option_products sop ON sop.shop_domain=m.shop_domain AND sop.shopify_variant_id=m.shopify_variant_id AND sop.is_option_only=1 AND sop.deleted_at IS NULL WHERE m.shop_domain=? AND m.option_value_id IN ($marks)");
             $verify->execute(array_merge([$shopDomain], $submittedIds));
             foreach ($verify->fetchAll() as $mapping) $savedConnections[(string)$mapping['option_value_id']] = (string)$mapping['shopify_variant_id'];
             foreach ($submittedIds as $submittedId) if (!isset($savedConnections[(string)$submittedId])) $savedConnections[(string)$submittedId] = '';

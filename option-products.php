@@ -34,6 +34,7 @@ try {
     if($action==='disconnect'){$stmt=db()->prepare('DELETE FROM option_value_shopify_products WHERE shop_domain=? AND option_value_id=?');$stmt->execute([$shop,$valueId]);echo json_encode(['success'=>true]);exit;}
     if($action!=='connect')throw new RuntimeException('Invalid action.');
     $variantId=(int)($_POST['variant_id']??0);$locationId=(int)($_POST['location_id']??0);if(!$variantId)throw new RuntimeException('Select a product variant.');
+    $available=db()->prepare('SELECT shopify_variant_id FROM shopify_option_products WHERE shop_domain=? AND shopify_variant_id=? AND is_option_only=1 AND deleted_at IS NULL LIMIT 1');$available->execute([$shop,$variantId]);if(!$available->fetch())throw new RuntimeException('The selected Shopify option product is no longer available. Reload and select again.');
     $state=option_inventory_variant_state($shop,$shopRow['access_token'],$variantId,$locationId?:null);
     if($state['tracked']&&!$state['location_id'])throw new RuntimeException('Tracked inventory requires an inventory location.');
     $sql='INSERT INTO option_value_shopify_products (shop_domain,option_value_id,shopify_product_id,shopify_variant_id,inventory_item_id,location_id,product_title,variant_title,sku) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE shopify_product_id=VALUES(shopify_product_id),shopify_variant_id=VALUES(shopify_variant_id),inventory_item_id=VALUES(inventory_item_id),location_id=VALUES(location_id),product_title=VALUES(product_title),variant_title=VALUES(variant_title),sku=VALUES(sku)';

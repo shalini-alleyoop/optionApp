@@ -27,3 +27,13 @@ DELETE FROM shopify_option_products
 WHERE is_option_only <> 1
    OR tags IS NULL
    OR FIND_IN_SET('option_only', REPLACE(LOWER(tags), ' ', '')) = 0;
+
+-- Connections may reference only an active option_only variant in the webhook cache.
+DELETE mapping
+FROM option_value_shopify_products AS mapping
+LEFT JOIN shopify_option_products AS product
+  ON product.shop_domain = mapping.shop_domain
+ AND product.shopify_variant_id = mapping.shopify_variant_id
+ AND product.is_option_only = 1
+ AND product.deleted_at IS NULL
+WHERE product.id IS NULL;
