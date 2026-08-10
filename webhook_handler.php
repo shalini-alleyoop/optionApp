@@ -2,6 +2,7 @@
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/option_inventory.php';
+require_once __DIR__ . '/shopify_option_products.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -42,6 +43,8 @@ try {
     $payload = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
     if ($topic === 'orders/create') option_inventory_process_order($shopDomain, $payload);
     elseif ($topic === 'orders/cancelled') option_inventory_cancel_order($shopDomain, $payload);
+    elseif ($topic === 'products/create' || $topic === 'products/update') shopify_option_products_upsert($shopDomain, $payload);
+    elseif ($topic === 'products/delete') shopify_option_products_delete($shopDomain, (int)($payload['id'] ?? 0));
     db()->prepare('UPDATE webhook_logs SET processed=1, processing_error=NULL WHERE id=?')->execute([$logId]);
 } catch (Throwable $e) {
     db()->prepare('UPDATE webhook_logs SET processing_error=? WHERE id=?')->execute([$e->getMessage(), $logId]);

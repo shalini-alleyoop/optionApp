@@ -2,6 +2,7 @@
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/option_inventory.php';
+require_once __DIR__ . '/shopify_option_products.php';
 start_session_once();
 header('Content-Type: application/json; charset=utf-8');
 
@@ -22,21 +23,8 @@ try {
 
     if ($action === 'search') {
         $term = trim((string)($_GET['q'] ?? ''));
-        $query = <<<'GQL'
-query OptionOnlyVariants($query: String!) {
-  productVariants(first: 50, query: $query) {
-    nodes { id title sku product { id title } }
-  }
-}
-GQL;
-        $safeTerm = preg_replace('/[^a-zA-Z0-9 _-]/', '', $term);
-        $search = 'tag:option_only' . ($safeTerm !== '' ? ' ' . $safeTerm : '');
-        $data = option_inventory_graphql($shop, $shopRow['access_token'], $query, ['query'=>$search]);
-        $items=[];
-        foreach (($data['productVariants']['nodes'] ?? []) as $variant) {
-            $product = $variant['product'] ?? [];
-            $items[]=['product_id'=>(int)preg_replace('/\D+/','',$product['id']??''),'product_title'=>$product['title']??'','variant_id'=>(int)preg_replace('/\D+/','',$variant['id']),'variant_title'=>$variant['title'],'sku'=>$variant['sku']??''];
-        }
+        shopify_option_products_seed_from_database($shop);
+        $items=shopify_option_products_search($shop,$term);
         echo json_encode(['success'=>true,'items'=>$items]); exit;
     }
 

@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS shopify_option_products (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    shop_domain VARCHAR(255) NOT NULL,
+    shopify_product_id BIGINT UNSIGNED NOT NULL,
+    shopify_variant_id BIGINT UNSIGNED NOT NULL,
+    inventory_item_id BIGINT UNSIGNED DEFAULT NULL,
+    product_title VARCHAR(255) NOT NULL,
+    variant_title VARCHAR(255) DEFAULT NULL,
+    handle VARCHAR(255) DEFAULT NULL,
+    sku VARCHAR(255) DEFAULT NULL,
+    tags TEXT DEFAULT NULL,
+    is_option_only TINYINT(1) NOT NULL DEFAULT 0,
+    product_status VARCHAR(50) DEFAULT NULL,
+    inventory_tracked TINYINT(1) NOT NULL DEFAULT 0,
+    inventory_quantity INT DEFAULT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at DATETIME DEFAULT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_shop_variant (shop_domain, shopify_variant_id),
+    KEY idx_option_products (shop_domain, is_option_only, deleted_at, product_title),
+    KEY idx_shop_product (shop_domain, shopify_product_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
