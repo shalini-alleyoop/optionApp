@@ -21,3 +21,9 @@ CREATE TABLE IF NOT EXISTS shopify_option_products (
     KEY idx_option_products (shop_domain, is_option_only, deleted_at, product_title),
     KEY idx_shop_product (shop_domain, shopify_product_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Remove legacy/seed rows that are not confirmed as option_only products.
+DELETE FROM shopify_option_products
+WHERE is_option_only <> 1
+   OR tags IS NULL
+   OR FIND_IN_SET('option_only', REPLACE(LOWER(tags), ' ', '')) = 0;

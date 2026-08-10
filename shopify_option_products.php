@@ -15,8 +15,13 @@ function shopify_option_products_upsert(string $shop, array $product): void {
     $productId = (int)($product['id'] ?? 0);
     if (!$productId) throw new InvalidArgumentException('Missing Shopify product ID.');
     $tags = shopify_option_product_tags($product['tags'] ?? []);
+    // This cache is intentionally limited to products carrying the option_only tag.
+    // If the tag is removed, purge the cached product and its obsolete connections.
+    if (!shopify_option_product_is_tagged($tags)) {
+        shopify_option_products_delete($shop, $productId);
+        return;
+    }
     $tagString = implode(', ', $tags);
-    $isOptionOnly = shopify_option_product_is_tagged($tags) ? 1 : 0;
     $variants = is_array($product['variants'] ?? null) ? $product['variants'] : [];
     $variantIds = [];
     $sql = 'INSERT INTO shopify_option_products (shop_domain,shopify_product_id,shopify_variant_id,inventory_item_id,product_title,variant_title,handle,sku,tags,is_option_only,product_status,inventory_tracked,inventory_quantity,deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL) ON DUPLICATE KEY UPDATE shopify_product_id=VALUES(shopify_product_id),inventory_item_id=VALUES(inventory_item_id),product_title=VALUES(product_title),variant_title=VALUES(variant_title),handle=VALUES(handle),sku=VALUES(sku),tags=VALUES(tags),is_option_only=VALUES(is_option_only),product_status=VALUES(product_status),inventory_tracked=VALUES(inventory_tracked),inventory_quantity=VALUES(inventory_quantity),deleted_at=NULL';
@@ -25,20 +30,23 @@ function shopify_option_products_upsert(string $shop, array $product): void {
         $variantId = (int)($variant['id'] ?? 0); if (!$variantId) continue;
         $variantIds[] = $variantId;
         $tracked = !empty($variant['inventory_management']) ? 1 : 0;
-        $stmt->execute([$shop,$productId,$variantId,!empty($variant['inventory_item_id'])?(int)$variant['inventory_item_id']:null,(string)($product['title']??''),(string)($variant['title']??''),(string)($product['handle']??''),(string)($variant['sku']??''),$tagString,$isOptionOnly,(string)($product['status']??''),$tracked,isset($variant['inventory_quantity'])?(int)$variant['inventory_quantity']:null]);
+        $stmt->execute([$shop,$productId,$variantId,!empty($variant['inventory_item_id'])?(int)$variant['inventory_item_id']:null,(string)($product['title']??''),(string)($variant['title']??''),(string)($product['handle']??''),(string)($variant['sku']??''),$tagString,1,(string)($product['status']??''),$tracked,isset($variant['inventory_quantity'])?(int)$variant['inventory_quantity']:null]);
     }
     if ($variantIds) {
         $marks = implode(',', array_fill(0, count($variantIds), '?'));
-        $delete = db()->prepare("UPDATE shopify_option_products SET is_option_only=0,deleted_at=NOW() WHERE shop_domain=? AND shopify_product_id=? AND shopify_variant_id NOT IN ($marks)");
-        $delete->execute(array_merge([$shop,$productId],$variantIds));
+        $params = array_merge([$shop,$productId],$variantIds);
+        $disconnect = db()->prepare("DELETE FROM option_value_shopify_products WHERE shop_domain=? AND shopify_product_id=? AND shopify_variant_id NOT IN ($marks)");
+        $disconnect->execute($params);
+        $delete = db()->prepare("DELETE FROM shopify_option_products WHERE shop_domain=? AND shopify_product_id=? AND shopify_variant_id NOT IN ($marks)");
+        $delete->execute($params);
     } else {
-        db()->prepare('UPDATE shopify_option_products SET is_option_only=0,deleted_at=NOW() WHERE shop_domain=? AND shopify_product_id=?')->execute([$shop,$productId]);
+        shopify_option_products_delete($shop, $productId);
     }
 }
 
 function shopify_option_products_delete(string $shop, int $productId): void {
     if (!$productId) throw new InvalidArgumentException('Missing Shopify product ID.');
-    db()->prepare('UPDATE shopify_option_products SET is_option_only=0,deleted_at=NOW() WHERE shop_domain=? AND shopify_product_id=?')->execute([$shop,$productId]);
+    db()->prepare('DELETE FROM shopify_option_products WHERE shop_domain=? AND shopify_product_id=?')->execute([$shop,$productId]);
     // Deleted Shopify products immediately behave like unconnected options.
     db()->prepare('DELETE FROM option_value_shopify_products WHERE shop_domain=? AND shopify_product_id=?')->execute([$shop,$productId]);
 }
@@ -65,8 +73,5 @@ function shopify_option_products_seed_from_database(string $shop): int {
         $logs->execute([$shop]);
         foreach($logs->fetchAll() as $log){$product=json_decode($log['payload'],true);if(!is_array($product)||empty($product['id']))continue;try{if($log['topic']==='products/delete')shopify_option_products_delete($shop,(int)$product['id']);else shopify_option_products_upsert($shop,$product);}catch(Throwable $e){error_log('Option product webhook seed skipped: '.$e->getMessage());}}
     }
-    // Preserve currently connected products even when the legacy product dump is old.
-    $sql='INSERT IGNORE INTO shopify_option_products (shop_domain,shopify_product_id,shopify_variant_id,inventory_item_id,product_title,variant_title,sku,is_option_only) SELECT shop_domain,shopify_product_id,shopify_variant_id,inventory_item_id,product_title,variant_title,sku,1 FROM option_value_shopify_products WHERE shop_domain=?';
-    $stmt=db()->prepare($sql);$stmt->execute([$shop]);
-    return $inserted+$stmt->rowCount();
+    return $inserted;
 }

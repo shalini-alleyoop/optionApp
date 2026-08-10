@@ -351,16 +351,7 @@ $limit      = $response['per_page'] ?? 20;
               function fillProductSelectors(scope, products) {
                 scope.querySelectorAll('.option-product-select').forEach(select => {
                   const current = select.dataset.current || '';
-                  const currentExists = products.some(item => String(item.variant_id) === current);
-                  let savedOption = '';
-                  if (current && !currentExists) {
-                    const savedTitle = select.dataset.currentTitle || 'Connected Shopify product';
-                    const savedVariant = select.dataset.currentVariant || '';
-                    const savedSku = select.dataset.currentSku || '';
-                    const label = savedVariant && savedVariant !== 'Default Title' ? `${savedTitle} — ${savedVariant}` : savedTitle;
-                    savedOption = `<option value="${escapeHtml(current)}" selected>${escapeHtml(label)}${savedSku ? ` [${escapeHtml(savedSku)}]` : ''}</option>`;
-                  }
-                  select.innerHTML = '<option value="">No connected product</option>' + savedOption + products.map(item => {
+                  select.innerHTML = '<option value="">No connected product</option>' + products.map(item => {
                     const title = item.variant_title && item.variant_title !== 'Default Title' ? `${item.product_title} — ${item.variant_title}` : item.product_title;
                     return `<option value="${item.variant_id}" ${String(item.variant_id) === current ? 'selected' : ''}>${escapeHtml(title)}${item.sku ? ` [${escapeHtml(item.sku)}]` : ''}</option>`;
                   }).join('');
