@@ -22,16 +22,20 @@ if (!$shop && !$productId) {
     exit('No shop or product context.');
 }
 $row = $admin->get_shop_detail($shop);
-// $update_product_tags = $admin->update_product_tags($row);
 $singleproduct = '';
+$product_options = '';
+$product_rules = null;
+$productName = 'Product';
 if ($row) {
     $shop_domain = $row['shop_domain'];
-    $product_options = $admin->get_product_options($productId);
+    $admin->ensure_bg_product($row, $productId);
+    $product_options = $admin->get_product_options($productId) ?: '';
     $product_rules = $admin->get_product_rules($productId);
-	$singleproductrow = $admin->get_row("SELECT * FROM bg_products WHERE shopify_product_id='" . intval($productId) . "'");
-	if ($singleproductrow) {
-		$singleproduct = $singleproductrow['product_id'];
-	}
+    $productName = $product_rules['product']['name'] ?? 'Product';
+    $singleproductrow = $admin->get_row("SELECT * FROM bg_products WHERE shopify_product_id='" . intval($productId) . "'");
+    if ($singleproductrow) {
+        $singleproduct = $singleproductrow['product_id'];
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -39,7 +43,7 @@ if ($row) {
 
 <head>
     <meta charset="utf-8">
-    <title><?= $product_rules['product']['name'] ?></title>
+    <title><?= htmlspecialchars($productName, ENT_QUOTES, 'UTF-8') ?></title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 	
 	<style>
@@ -86,7 +90,7 @@ if ($row) {
 	</div>
 	<div id="pageLoader" style="display:none;">Loading...</div>
     <div class="dashboard-wrapper-header">
-        <h2 class="dashboard-title"><?= $product_rules['product']['name'] ?></h2>
+        <h2 class="dashboard-title"><?= htmlspecialchars($productName, ENT_QUOTES, 'UTF-8') ?></h2>
         <div>
             <a class="btn install-btn" href="custom-order.php?productId=<?= urlencode($productId) ?>&shop=<?= urlencode($shop) ?>">Custom Order</a>
             <a class="btn install-btn" target="_blank" href="<?= $previewurl ?>">View Product</a>
