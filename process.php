@@ -145,4 +145,22 @@ if (isset($_GET['action']) && $_GET['action'] == 'product_creation') {
 } else if (isset($_POST['action']) && $_POST['action'] == 'get_engraving_instructions') {
     header('Content-Type: application/json');
     echo json_encode(['success' => true, 'data' => $admin->get_engraving_instructions($domain)]);
+} else if (isset($_POST['action']) && $_POST['action'] == 'create_custom_draft_order') {
+    header('Content-Type: application/json');
+    $secSite = $_SERVER['HTTP_SEC_FETCH_SITE'] ?? '';
+    $adminOk = (!empty($_SESSION['shop']) && $_SESSION['shop'] === $domain)
+        || ($secSite !== '' && $secSite !== 'none' && $domain === SHOPIFY_ALLOWED_SHOP);
+    if (!$adminOk) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'Admin session required.']);
+        exit;
+    }
+    $csrf = (string)($_POST['csrf_token'] ?? '');
+    if (empty($_SESSION['custom_order_csrf']) || !hash_equals($_SESSION['custom_order_csrf'], $csrf)) {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'message' => 'Invalid request token. Reload the page and try again.']);
+        exit;
+    }
+    echo json_encode($admin->create_custom_product_and_draft_order($getdata, $_POST));
+    exit;
 }
