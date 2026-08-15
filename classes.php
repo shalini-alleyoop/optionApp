@@ -657,6 +657,125 @@ class Admin extends DB
         exit();
     }
 
+    function compute_option_price($product_id, $prdprice, $product_options_arr)
+    {
+        $product_id = (int)$product_id;
+        $product_options_arr = is_array($product_options_arr) ? $product_options_arr : [];
+        $selected_value_ids = array_map('intval', array_column($product_options_arr, 'option_value_id'));
+        $selected_set = array_flip($selected_value_ids);
+
+        $all_rules = $this->get_results(
+            "SELECT * FROM bg_product_rules_extract
+             WHERE product_id = $product_id
+               AND (is_enabled = 1 OR is_enabled = 'true')
+             ORDER BY sort_order ASC"
+        ) ?: [];
+
+        $matched_rules = [];
+        $vid_to_rules  = [];
+        foreach ($all_rules as $rule) {
+            $conditions = json_decode($rule['conditions_json'], true) ?: [];
+            $groups = [];
+            foreach ($conditions as $c) {
+                if (empty($c['option_value_id'])) continue;
+                $vid = intval($c['option_value_id']);
+                $oid = !empty($c['option_id']) ? $c['option_id'] : ($c['product_option_id'] ?? 'na');
+                $groups[$oid][] = $vid;
+            }
+            if (empty($groups)) continue;
+
+            $all_match   = true;
+            $matched_vids = [];
+            foreach ($groups as $oid => $vid_list) {
+                $hit = null;
+                foreach ($vid_list as $rvid) {
+                    if (isset($selected_set[$rvid])) { $hit = $rvid; break; }
+                }
+                if ($hit === null) { $all_match = false; break; }
+                $matched_vids[] = $hit;
+            }
+            if (!$all_match) continue;
+
+            $rid = $rule['id'];
+            $matched_rules[$rid] = [
+                'adjuster'       => $rule['adjuster'],
+                'adjuster_value' => $rule['adjuster_value'],
+                'value_ids'      => $matched_vids,
+            ];
+            foreach ($matched_vids as $rvid) {
+                $vid_to_rules[$rvid][] = $rid;
+            }
+        }
+
+        $ordered_prices = [];
+        if (!empty($selected_value_ids)) {
+            $ids_str      = implode(',', $selected_value_ids);
+            $ordered_opts = $this->get_results(
+                "SELECT po.sort_order, ov.option_value_id, ov.price, ov.price_type, ov.price_adjust
+                 FROM bg_product_options po
+                 JOIN bg_option_values ov ON po.option_id = ov.option_id
+                 WHERE po.product_id = $product_id
+                   AND ov.option_value_id IN ($ids_str)
+                 ORDER BY po.sort_order ASC"
+            ) ?: [];
+
+            $used_rules     = [];
+            $processed_vids = [];
+            foreach ($ordered_opts as $opt) {
+                $vid = intval($opt['option_value_id']);
+                if (isset($processed_vids[$vid])) continue;
+                $processed_vids[$vid] = true;
+
+                if (isset($vid_to_rules[$vid])) {
+                    foreach ($vid_to_rules[$vid] as $rid) {
+                        if (!isset($used_rules[$rid])) {
+                            $used_rules[$rid] = true;
+                            $ordered_prices[] = [
+                                'adjuster'       => $matched_rules[$rid]['adjuster'],
+                                'adjuster_value' => $matched_rules[$rid]['adjuster_value'],
+                                '_source'        => 'rule:' . $rid . ':vid:' . $vid,
+                            ];
+                        }
+                    }
+                }
+                if (!empty($opt['price'])) {
+                    $adjust_dir   = ($opt['price_adjust'] ?? 'add') === 'remove' ? -1 : 1;
+                    $global_value = (float)$opt['price'] * $adjust_dir;
+                    $ordered_prices[] = [
+                        'adjuster'       => $opt['price_type'] ?? 'relative',
+                        'adjuster_value' => $global_value,
+                        '_source'        => 'global:vid:' . $vid,
+                    ];
+                }
+            }
+        }
+
+        $product_price = $this->calculatePrice($ordered_prices, $prdprice);
+        return [
+            "rawdata"       => $ordered_prices,
+            "success"       => true,
+            "message"       => "Product Price Found",
+            "product_price" => number_format($product_price, 2),
+            "raw_price"     => $product_price,
+            "_debug"        => [
+                "selected_vids"  => $selected_value_ids,
+                "matched_rules"  => array_map(fn($r) => [
+                    'adjuster'       => $r['adjuster'],
+                    'adjuster_value' => $r['adjuster_value'],
+                    'value_ids'      => array_values($r['value_ids']),
+                ], $matched_rules),
+                "vid_to_rules"   => $vid_to_rules,
+                "all_rules"      => array_map(fn($r) => [
+                    'id'             => $r['id'],
+                    'is_enabled'     => $r['is_enabled'],
+                    'adjuster'       => $r['adjuster'],
+                    'adjuster_value' => $r['adjuster_value'],
+                    'conditions'     => json_decode($r['conditions_json'], true),
+                ], $all_rules ?: []),
+            ],
+        ];
+    }
+
     function get_price()
     {
         $response = [
@@ -666,147 +785,18 @@ class Admin extends DB
             "raw_price" => 0
         ];
         if (isset($_POST["product_id"], $_POST["product_options"])) {
-            $product_id = (int)$_POST["product_id"];
-            $product_options = $_POST["product_options"];
-            $prdprice = $_POST["product_price"];
-
-            $product_options_arr = json_decode($product_options, true) ?: [];
-            $selected_value_ids = array_map('intval', array_column($product_options_arr, 'option_value_id'));
-            $selected_set = array_flip($selected_value_ids);
-
-            // Load all enabled rules for this product and check which ones fully match
-            $all_rules = $this->get_results(
-                "SELECT * FROM bg_product_rules_extract
-                 WHERE product_id = $product_id
-                   AND (is_enabled = 1 OR is_enabled = 'true')
-                 ORDER BY sort_order ASC"
+            $response = $this->compute_option_price(
+                (int)$_POST["product_id"],
+                $_POST["product_price"],
+                json_decode($_POST["product_options"], true) ?: []
             );
-
-            // Parse each rule and check if it matches the selected values.
-            // Conditions from the same option_id are OR'd (user picks one value from that option).
-            // Conditions from different option_ids are AND'd (all option groups must match).
-            $matched_rules = [];   // rule_id → ['adjuster', 'adjuster_value', 'value_ids']
-            $vid_to_rules  = [];   // option_value_id → [rule_id, ...] (all matching rules)
-            foreach ($all_rules as $rule) {
-                $conditions = json_decode($rule['conditions_json'], true) ?: [];
-
-                // Group condition vids by option_id so same-option conditions are OR'd
-                $groups = [];
-                foreach ($conditions as $c) {
-                    if (empty($c['option_value_id'])) continue;
-                    $vid = intval($c['option_value_id']);
-                    $oid = !empty($c['option_id']) ? $c['option_id'] : ($c['product_option_id'] ?? 'na');
-                    $groups[$oid][] = $vid;
-                }
-
-                if (empty($groups)) continue;
-
-                // Rule matches when every option group has at least one selected value
-                $all_match   = true;
-                $matched_vids = [];  // the specific selected vid that satisfied each group
-                foreach ($groups as $oid => $vid_list) {
-                    $hit = null;
-                    foreach ($vid_list as $rvid) {
-                        if (isset($selected_set[$rvid])) { $hit = $rvid; break; }
-                    }
-                    if ($hit === null) { $all_match = false; break; }
-                    $matched_vids[] = $hit;
-                }
-                if (!$all_match) continue;
-
-                $rid = $rule['id'];
-                $matched_rules[$rid] = [
-                    'adjuster'       => $rule['adjuster'],
-                    'adjuster_value' => $rule['adjuster_value'],
-                    'value_ids'      => $matched_vids,
-                ];
-                foreach ($matched_vids as $rvid) {
-                    $vid_to_rules[$rvid][] = $rid;  // collect ALL rules per vid
-                }
-            }
-
-            // Fetch option_value prices and their option sort_order in one query
-            $ordered_prices = [];
-            if (!empty($selected_value_ids)) {
-                $ids_str      = implode(',', $selected_value_ids);
-                $ordered_opts = $this->get_results(
-                    "SELECT po.sort_order, ov.option_value_id, ov.price, ov.price_type, ov.price_adjust
-                     FROM bg_product_options po
-                     JOIN bg_option_values ov ON po.option_id = ov.option_id
-                     WHERE po.product_id = $product_id
-                       AND ov.option_value_id IN ($ids_str)
-                     ORDER BY po.sort_order ASC"
-                );
-
-                $used_rules     = [];
-                $processed_vids = [];
-                foreach ($ordered_opts as $opt) {
-                    $vid = intval($opt['option_value_id']);
-                    // Skip duplicate option_value_id rows (can occur if same option_id
-                    // appears more than once in bg_product_options for this product)
-                    if (isset($processed_vids[$vid])) continue;
-                    $processed_vids[$vid] = true;
-
-                    if (isset($vid_to_rules[$vid])) {
-                        // Apply ALL matching product-level rules first
-                        foreach ($vid_to_rules[$vid] as $rid) {
-                            if (!isset($used_rules[$rid])) {
-                                $used_rules[$rid] = true;
-                                $ordered_prices[] = [
-                                    'adjuster'       => $matched_rules[$rid]['adjuster'],
-                                    'adjuster_value' => $matched_rules[$rid]['adjuster_value'],
-                                    '_source'        => 'rule:' . $rid . ':vid:' . $vid,
-                                ];
-                            }
-                        }
-                    }
-                    // Always apply global option-level price on top (after any rules)
-                    if (!empty($opt['price'])) {
-                        $adjust_dir   = ($opt['price_adjust'] ?? 'add') === 'remove' ? -1 : 1;
-                        $global_value = (float)$opt['price'] * $adjust_dir;
-                        $ordered_prices[] = [
-                            'adjuster'       => $opt['price_type'] ?? 'relative',
-                            'adjuster_value' => $global_value,
-                            '_source'        => 'global:vid:' . $vid,
-                        ];
-                    }
-                }
-            }
-
-            $product_prices = $ordered_prices;
-            $product_price  = $this->calculatePrice($product_prices, $prdprice);
-            $product_price_formated = number_format($product_price, 2);
-
-
-            $response = [
-                "rawdata"       => $product_prices,
-                "success"       => true,
-                "message"       => "Product Price Found",
-                "product_price" => $product_price_formated,
-                "raw_price"     => $product_price,
-                "_debug"        => [
-                    "selected_vids"  => $selected_value_ids,
-                    "matched_rules"  => array_map(fn($r) => [
-                        'adjuster'       => $r['adjuster'],
-                        'adjuster_value' => $r['adjuster_value'],
-                        'value_ids'      => array_values($r['value_ids']),
-                    ], $matched_rules),
-                    "vid_to_rules"   => $vid_to_rules,
-                    "all_rules"      => array_map(fn($r) => [
-                        'id'             => $r['id'],
-                        'is_enabled'     => $r['is_enabled'],
-                        'adjuster'       => $r['adjuster'],
-                        'adjuster_value' => $r['adjuster_value'],
-                        'conditions'     => json_decode($r['conditions_json'], true),
-                    ], $all_rules ?: []),
-                ],
-            ];
             echo json_encode($response);
         } else {
             $response = [
                 "success" => false,
                 "message" => "Product Price Not Found",
             ];
+            echo json_encode($response);
         }
         exit();
     }
@@ -1888,5 +1878,430 @@ class Admin extends DB
 
         echo json_encode(['success' => $res ? true : false]);
         exit;
+    }
+
+    function shopify_graphql($row, $query, $variables = [])
+    {
+        $shop = $row['shop_domain'];
+        $accessToken = $row['access_token'];
+        $endpoint = "https://$shop/admin/api/" . SHOPIFY_API_VERSION . "/graphql.json";
+        $ch = curl_init($endpoint);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Content-Type: application/json",
+            "X-Shopify-Access-Token: $accessToken"
+        ]);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['query' => $query, 'variables' => $variables]));
+        $response = curl_exec($ch);
+        $error = curl_error($ch);
+        curl_close($ch);
+        if ($response === false) {
+            return ['errors' => [['message' => $error ?: 'Shopify request failed.']]];
+        }
+        $decoded = json_decode($response, true);
+        return is_array($decoded) ? $decoded : ['errors' => [['message' => 'Invalid Shopify response.']]];
+    }
+
+    function shopify_gid_id($gid)
+    {
+        return (int)preg_replace('/\D+/', '', (string)$gid);
+    }
+
+    function shopify_first_error($payload, $mutationKey = null)
+    {
+        if (!empty($payload['errors'][0]['message'])) {
+            return (string)$payload['errors'][0]['message'];
+        }
+        if ($mutationKey && !empty($payload['data'][$mutationKey]['userErrors'][0]['message'])) {
+            return (string)$payload['data'][$mutationKey]['userErrors'][0]['message'];
+        }
+        return '';
+    }
+
+    function get_shopify_product_for_custom_order($row, $productId)
+    {
+        $productId = (int)$productId;
+        if (!$productId) {
+            return ['success' => false, 'message' => 'Missing product.'];
+        }
+
+        $query = <<<'GQL'
+query ProductForCustomOrder($id: ID!) {
+  shop { currencyCode }
+  product(id: $id) {
+    id
+    title
+    handle
+    vendor
+    status
+    descriptionHtml
+    featuredMedia {
+      preview { image { url altText } }
+    }
+    media(first: 12) {
+      nodes {
+        alt
+        preview { image { url altText } }
+      }
+    }
+    options {
+      id
+      name
+      values
+    }
+    variants(first: 250) {
+      nodes {
+        id
+        title
+        sku
+        price
+        inventoryQuantity
+        inventoryPolicy
+        image { url altText }
+        selectedOptions { name value }
+      }
+    }
+  }
+}
+GQL;
+        $payload = $this->shopify_graphql($row, $query, [
+            'id' => 'gid://shopify/Product/' . $productId
+        ]);
+        $error = $this->shopify_first_error($payload);
+        $product = $payload['data']['product'] ?? null;
+        if ($error && !$product) {
+            return ['success' => false, 'message' => $error];
+        }
+        if (!$product) {
+            return ['success' => false, 'message' => 'Shopify product not found.'];
+        }
+
+        $variants = [];
+        foreach (($product['variants']['nodes'] ?? []) as $variant) {
+            $price = $variant['price'] ?? '0';
+            $variants[] = [
+                'id' => $this->shopify_gid_id($variant['id'] ?? ''),
+                'gid' => $variant['id'] ?? '',
+                'title' => (string)($variant['title'] ?? ''),
+                'sku' => (string)($variant['sku'] ?? ''),
+                'price' => (string)$price,
+                'inventoryQuantity' => isset($variant['inventoryQuantity']) ? (int)$variant['inventoryQuantity'] : null,
+                'inventoryPolicy' => (string)($variant['inventoryPolicy'] ?? ''),
+                'image' => $variant['image']['url'] ?? null,
+                'imageAlt' => $variant['image']['altText'] ?? '',
+                'selectedOptions' => $variant['selectedOptions'] ?? [],
+            ];
+        }
+
+        $options = [];
+        foreach (($product['options'] ?? []) as $option) {
+            $name = (string)($option['name'] ?? '');
+            $values = array_values(array_filter(array_map('strval', $option['values'] ?? [])));
+            if ($name === '' || ($name === 'Title' && $values === ['Default Title'])) {
+                continue;
+            }
+            $options[] = ['name' => $name, 'values' => $values];
+        }
+
+        $images = [];
+        foreach (($product['media']['nodes'] ?? []) as $media) {
+            $url = $media['preview']['image']['url'] ?? '';
+            if ($url === '') continue;
+            $images[] = [
+                'url' => $url,
+                'alt' => (string)($media['alt'] ?? $media['preview']['image']['altText'] ?? $product['title']),
+            ];
+        }
+        $featured = $product['featuredMedia']['preview']['image']['url'] ?? ($images[0]['url'] ?? '');
+
+        $local = $this->get_row("SELECT * FROM `bg_products` WHERE `shopify_product_id`='" . $productId . "'");
+
+        return [
+            'success' => true,
+            'currency' => (string)($payload['data']['shop']['currencyCode'] ?? 'USD'),
+            'product' => [
+                'id' => $productId,
+                'gid' => $product['id'],
+                'title' => (string)$product['title'],
+                'handle' => (string)($product['handle'] ?? ''),
+                'vendor' => (string)($product['vendor'] ?? ''),
+                'status' => (string)($product['status'] ?? ''),
+                'descriptionHtml' => (string)($product['descriptionHtml'] ?? ''),
+                'featuredImage' => $featured,
+                'images' => $images,
+                'options' => $options,
+                'variants' => $variants,
+                'hasOnlyDefaultVariant' => empty($options),
+                'localProductId' => $local ? (int)$local['product_id'] : null,
+                'localPrice' => $local['price'] ?? null,
+            ],
+        ];
+    }
+
+    function create_custom_product_and_draft_order($row, $input)
+    {
+        $shopifyProductId = (int)($input['shopify_product_id'] ?? 0);
+        $variantId = (int)($input['variant_id'] ?? 0);
+        $quantity = max(1, (int)($input['quantity'] ?? 1));
+        $email = trim((string)($input['customer_email'] ?? ''));
+        $note = trim((string)($input['note'] ?? ''));
+        $properties = $input['properties'] ?? [];
+        if (is_string($properties)) {
+            $properties = json_decode($properties, true) ?: [];
+        }
+        if (!is_array($properties)) $properties = [];
+
+        $productOptions = $input['product_options'] ?? [];
+        if (is_string($productOptions)) {
+            $productOptions = json_decode($productOptions, true) ?: [];
+        }
+        if (!is_array($productOptions)) $productOptions = [];
+
+        if (!$shopifyProductId || !$variantId) {
+            return ['success' => false, 'message' => 'Select a product variant before creating the draft order.'];
+        }
+
+        $source = $this->get_shopify_product_for_custom_order($row, $shopifyProductId);
+        if (empty($source['success'])) {
+            return $source;
+        }
+        $product = $source['product'];
+        $currency = $source['currency'] ?: 'USD';
+        $variant = null;
+        foreach ($product['variants'] as $candidate) {
+            if ((int)$candidate['id'] === $variantId) {
+                $variant = $candidate;
+                break;
+            }
+        }
+        if (!$variant) {
+            return ['success' => false, 'message' => 'The selected variant is no longer available.'];
+        }
+
+        $basePrice = $variant['price'] !== '' ? $variant['price'] : ($product['localPrice'] ?? '0');
+        $localProductId = $product['localProductId'];
+        $rawPrice = (float)$basePrice;
+        if ($localProductId) {
+            $priced = $this->compute_option_price($localProductId, $basePrice, $productOptions);
+            if (!empty($priced['success'])) {
+                $rawPrice = (float)$priced['raw_price'];
+            }
+        }
+        $priceAmount = number_format(max(0, $rawPrice), 2, '.', '');
+
+        $cleanProperties = [];
+        $seenKeys = [];
+        foreach ($properties as $prop) {
+            $key = trim((string)($prop['key'] ?? $prop['name'] ?? ''));
+            $value = trim((string)($prop['value'] ?? ''));
+            if ($key === '' || $value === '') continue;
+            $norm = strtolower($key);
+            if (isset($seenKeys[$norm])) continue;
+            $seenKeys[$norm] = true;
+            $cleanProperties[] = ['key' => $key, 'value' => $value];
+        }
+
+        $optionValueIds = [];
+        foreach ($productOptions as $opt) {
+            if (!empty($opt['option_value_id'])) $optionValueIds[] = (int)$opt['option_value_id'];
+        }
+        $optionValueIds = array_values(array_unique(array_filter($optionValueIds)));
+        if ($optionValueIds && !isset($seenKeys['_option value ids'])) {
+            $cleanProperties[] = ['key' => '_Option Value IDs', 'value' => implode(',', $optionValueIds)];
+        }
+        if (!isset($seenKeys['_product price'])) {
+            $cleanProperties[] = ['key' => '_Product Price', 'value' => $priceAmount];
+        }
+        if (!isset($seenKeys['_source product'])) {
+            $cleanProperties[] = ['key' => '_Source Product', 'value' => (string)$shopifyProductId];
+        }
+        if (!isset($seenKeys['_source variant'])) {
+            $cleanProperties[] = ['key' => '_Source Variant', 'value' => (string)$variantId];
+        }
+
+        $summaryParts = [];
+        if ($variant['title'] && $variant['title'] !== 'Default Title') {
+            $summaryParts[] = $variant['title'];
+        }
+        foreach ($cleanProperties as $prop) {
+            if (str_starts_with($prop['key'], '_')) continue;
+            $summaryParts[] = $prop['key'] . ': ' . $prop['value'];
+        }
+        $customTitle = $product['title'];
+        if ($summaryParts) {
+            $suffix = ' — ' . implode(' / ', array_slice($summaryParts, 0, 8));
+            $customTitle = substr($product['title'] . $suffix, 0, 255);
+        } else {
+            $customTitle = substr($product['title'] . ' (Custom)', 0, 255);
+        }
+
+        $descriptionItems = '';
+        foreach ($cleanProperties as $prop) {
+            if (str_starts_with($prop['key'], '_')) continue;
+            $descriptionItems .= '<li>' . htmlspecialchars($prop['key'], ENT_QUOTES, 'UTF-8') . ': ' . htmlspecialchars($prop['value'], ENT_QUOTES, 'UTF-8') . '</li>';
+        }
+        $descriptionHtml = '<p>Custom order based on <strong>' . htmlspecialchars($product['title'], ENT_QUOTES, 'UTF-8') . '</strong></p>';
+        if ($descriptionItems !== '') {
+            $descriptionHtml .= '<ul>' . $descriptionItems . '</ul>';
+        }
+        $descriptionHtml .= '<p>Calculated price: ' . htmlspecialchars($priceAmount, ENT_QUOTES, 'UTF-8') . ' ' . htmlspecialchars($currency, ENT_QUOTES, 'UTF-8') . '</p>';
+
+        $productInput = [
+            'title' => $customTitle,
+            'vendor' => 'custom_product',
+            'status' => 'DRAFT',
+            'productType' => 'Custom Order',
+            'tags' => ['custom_order', 'custom_product'],
+            'descriptionHtml' => $descriptionHtml,
+        ];
+        $media = [];
+        $imageUrl = $variant['image'] ?: $product['featuredImage'];
+        if ($imageUrl) {
+            $media[] = [
+                'originalSource' => $imageUrl,
+                'alt' => $product['title'],
+                'mediaContentType' => 'IMAGE',
+            ];
+        }
+
+        $createMutation = <<<'GQL'
+mutation CreateCustomProduct($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
+  productCreate(product: $product, media: $media) {
+    product {
+      id
+      title
+      variants(first: 1) { nodes { id } }
+    }
+    userErrors { field message }
+  }
+}
+GQL;
+        $created = $this->shopify_graphql($row, $createMutation, [
+            'product' => $productInput,
+            'media' => $media ?: null,
+        ]);
+        $createError = $this->shopify_first_error($created, 'productCreate');
+        $newProduct = $created['data']['productCreate']['product'] ?? null;
+        if ($createError || !$newProduct) {
+            return ['success' => false, 'message' => $createError ?: 'Unable to create the custom product.'];
+        }
+
+        $newProductId = $newProduct['id'];
+        $newVariantGid = $newProduct['variants']['nodes'][0]['id'] ?? null;
+        if ($newVariantGid) {
+            $updateMutation = <<<'GQL'
+mutation UpdateCustomVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+  productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+    productVariants { id }
+    userErrors { field message }
+  }
+}
+GQL;
+            $sku = $variant['sku'] !== '' ? $variant['sku'] . '-CUSTOM' : '';
+            $variantInput = [
+                'id' => $newVariantGid,
+                'price' => $priceAmount,
+            ];
+            if ($sku !== '') {
+                $variantInput['inventoryItem'] = ['sku' => substr($sku, 0, 255)];
+            }
+            $this->shopify_graphql($row, $updateMutation, [
+                'productId' => $newProductId,
+                'variants' => [$variantInput],
+            ]);
+        }
+
+        $lineAttributes = [];
+        foreach ($cleanProperties as $prop) {
+            $lineAttributes[] = ['key' => $prop['key'], 'value' => $prop['value']];
+        }
+
+        $draftNote = $note;
+        if ($summaryParts) {
+            $configNote = $product['title'] . "\n" . implode("\n", $summaryParts);
+            $draftNote = trim($draftNote === '' ? $configNote : $draftNote . "\n\n" . $configNote);
+        }
+
+        $lineItem = [
+            'variantId' => $newVariantGid,
+            'quantity' => $quantity,
+            'customAttributes' => $lineAttributes,
+            'priceOverride' => [
+                'amount' => $priceAmount,
+                'currencyCode' => $currency,
+            ],
+        ];
+        $draftInput = [
+            'lineItems' => [$lineItem],
+            'tags' => ['custom_order'],
+        ];
+        if ($draftNote !== '') {
+            $draftInput['note'] = $draftNote;
+        }
+        if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $draftInput['email'] = $email;
+        }
+
+        $draftMutation = <<<'GQL'
+mutation CreateCustomDraftOrder($input: DraftOrderInput!) {
+  draftOrderCreate(input: $input) {
+    draftOrder {
+      id
+      name
+      invoiceUrl
+    }
+    userErrors { field message }
+  }
+}
+GQL;
+        $drafted = $this->shopify_graphql($row, $draftMutation, ['input' => $draftInput]);
+        $draftError = $this->shopify_first_error($drafted, 'draftOrderCreate');
+        $draftOrder = $drafted['data']['draftOrderCreate']['draftOrder'] ?? null;
+
+        if (($draftError || !$draftOrder) && $newVariantGid) {
+            $fallbackItem = [
+                'title' => $customTitle,
+                'quantity' => $quantity,
+                'sku' => $variant['sku'] !== '' ? $variant['sku'] . '-CUSTOM' : null,
+                'customAttributes' => $lineAttributes,
+                'originalUnitPriceWithCurrency' => [
+                    'amount' => $priceAmount,
+                    'currencyCode' => $currency,
+                ],
+                'requiresShipping' => true,
+                'taxable' => true,
+            ];
+            $fallbackInput = $draftInput;
+            $fallbackInput['lineItems'] = [$fallbackItem];
+            $drafted = $this->shopify_graphql($row, $draftMutation, ['input' => $fallbackInput]);
+            $draftError = $this->shopify_first_error($drafted, 'draftOrderCreate');
+            $draftOrder = $drafted['data']['draftOrderCreate']['draftOrder'] ?? null;
+        }
+
+        if ($draftError || !$draftOrder) {
+            return [
+                'success' => false,
+                'message' => $draftError ?: 'Custom product was created, but the draft order could not be created.',
+                'custom_product_id' => $this->shopify_gid_id($newProductId),
+                'custom_product_admin_url' => 'https://' . $row['shop_domain'] . '/admin/products/' . $this->shopify_gid_id($newProductId),
+            ];
+        }
+
+        $draftNumericId = $this->shopify_gid_id($draftOrder['id']);
+        $productNumericId = $this->shopify_gid_id($newProductId);
+        return [
+            'success' => true,
+            'message' => 'Custom product and draft order created.',
+            'price' => $priceAmount,
+            'currency' => $currency,
+            'custom_product_id' => $productNumericId,
+            'custom_product_title' => $newProduct['title'] ?? $customTitle,
+            'custom_product_admin_url' => 'https://' . $row['shop_domain'] . '/admin/products/' . $productNumericId,
+            'draft_order_id' => $draftNumericId,
+            'draft_order_name' => $draftOrder['name'] ?? ('#' . $draftNumericId),
+            'draft_order_admin_url' => 'https://' . $row['shop_domain'] . '/admin/draft_orders/' . $draftNumericId,
+            'invoice_url' => $draftOrder['invoiceUrl'] ?? null,
+        ];
     }
 }

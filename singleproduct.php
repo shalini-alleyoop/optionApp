@@ -87,7 +87,10 @@ if ($row) {
 	<div id="pageLoader" style="display:none;">Loading...</div>
     <div class="dashboard-wrapper-header">
         <h2 class="dashboard-title"><?= $product_rules['product']['name'] ?></h2>
-        <a class="btn install-btn" target="_blank" href="<?= $previewurl ?>">View Product</a>
+        <div>
+            <a class="btn install-btn" href="custom-order.php?productId=<?= urlencode($productId) ?>&shop=<?= urlencode($shop) ?>">Custom Order</a>
+            <a class="btn install-btn" target="_blank" href="<?= $previewurl ?>">View Product</a>
+        </div>
     </div>
     <div class="single-prd-options-wrapper">
         <?php if ($row): ?>

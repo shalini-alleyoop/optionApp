@@ -197,6 +197,18 @@ a.btn.install-btn + a {
     background: #1565C0; /* Material Blue 800 */
 }
 
+.custom-order-card-btn {
+    position: relative;
+    z-index: 2;
+    background: #000;
+    color: #fff;
+    text-decoration: none;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
 .pagination-link {
     transition: all 0.2s ease;
     display: inline-flex;
@@ -247,6 +259,7 @@ a.btn.install-btn + a {
     <div class="dashboard-wrapper-header">
         <h2 class="dashboard-title">Products Dashboard</h2>
 		<div>
+			<a class="btn install-btn" href="custom-order.php?shop=<?= urlencode($shop) ?>">Custom Order</a>
 			<a class="btn install-btn" href="alloptions.php?shop=<?= urlencode($shop) ?>">All Options</a>
 			<a class="btn install-btn" href="insert_script.php?shop=<?= urlencode($shop) ?>">Insert Script</a>
 			<a class="btn install-btn" href="engraving-editor.php?shop=<?= urlencode($shop) ?>">Engraving Instructions</a>
@@ -290,6 +303,7 @@ a.btn.install-btn + a {
 
                                 <div class="product-info">
                                     <div class="product-title"><?= htmlspecialchars($p['title']) ?></div>
+                                    <a class="custom-order-card-btn" href="custom-order.php?productId=<?= $productId ?>&shop=<?= urlencode($shop) ?>">Custom Order</a>
                                     <div class="product-status">Active</div>
                                 </div>
                             </div>
