@@ -24,7 +24,7 @@ if (!verify_shopify_hmac($params, SHOPIFY_API_SECRET)) {
 }
 
 $tokenResp = exchange_access_token($shop, $code);
-if ($tokenResp['error'] || empty($tokenResp['access_token'])) {
+if (!empty($tokenResp['error']) || empty($tokenResp['access_token'])) {
     http_response_code(500);
     echo "Failed to get access token. " . htmlspecialchars($tokenResp['error'] ?? 'Unknown error');
     exit;
@@ -62,8 +62,9 @@ $_SESSION['access_token'] = $accessToken;
 $_SESSION['hs_token'] = base64_encode(json_encode(['myshopifyDomain' => $shop]));
 $_SESSION['shop'] = $shop;
 
-$encodedURL = '?hw_token=' . urlencode($_SESSION['hs_token']);
-redirect_to(APP_URL . '/dashboard.php' . $encodedURL);
+// Already in a top-level tab after OAuth. 302 back into Admin so Shopify
+// reloads this app inside the admin iframe.
+redirect_to(shopify_admin_app_url($shop));
 
 
 function exchange_access_token(string $shop, string $code): array {

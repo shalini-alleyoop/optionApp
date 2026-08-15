@@ -3,6 +3,7 @@ require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/connect.php';
 start_session_once();
 require_https();
+send_embed_headers();
 redirect_if_no_shopify_context();
 
 $shop = $_GET['shop'] ?? ($_SESSION['shop'] ?? '');
@@ -32,9 +33,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $settings = $admin->get_engraving_instructions($shop);
 ?>
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Engraving Instructions Editor</title>
+<?php render_embed_head(); ?>
 <style>
 *{box-sizing:border-box}body{margin:0;padding:32px 18px;background:#f5f6f8;color:#202124;font-family:Arial,sans-serif}.page{max-width:1050px;margin:auto}.card{background:#fff;border:1px solid #dfe3e8;border-radius:9px;box-shadow:0 2px 8px #0000000d;overflow:hidden}.header,.field,.actions{padding:20px 24px}.header{border-bottom:1px solid #e5e7eb}.header h1{margin:0 0 6px;font-size:24px}.muted{margin:0;color:#687078}.message{margin:18px 24px 0;padding:12px;background:#e8f5e9;border:1px solid #9ccc9c;border-radius:6px;color:#245b28}.field label{display:block;margin-bottom:7px;font-weight:600}.field input{width:100%;padding:10px 12px;border:1px solid #bbc1c7;border-radius:5px;font:inherit}.tabs{display:flex;gap:4px;padding:0 24px}.tab{padding:9px 15px;border:1px solid #c9ced4;border-radius:6px 6px 0 0;background:#f3f4f6;cursor:pointer}.tab.active{background:#1976d2;border-color:#1976d2;color:#fff}.editor-shell{margin:0 24px;border:1px solid #c9ced4}.toolbar{display:flex;flex-wrap:wrap;gap:5px;padding:8px;background:#f7f8fa;border-bottom:1px solid #d9dde2}.toolbar button{padding:7px 10px;border:1px solid #c4c9cf;border-radius:4px;background:#fff;cursor:pointer}#visualEditor{min-height:300px;padding:16px;outline:none;line-height:1.55}#sourceEditor{display:none;width:100%;min-height:340px;padding:16px;border:0;resize:vertical;outline:none;font:14px/1.5 Consolas,monospace}.actions{display:flex;gap:10px}.button{display:inline-block;padding:11px 17px;border:0;border-radius:5px;font-weight:600;text-decoration:none;cursor:pointer}.primary{background:#1976d2;color:#fff}.secondary{background:#e8eaed;color:#202124}@media(max-width:600px){body{padding:12px 6px}.header,.field,.actions,.tabs{padding-left:12px;padding-right:12px}.editor-shell{margin:0 12px}}
-</style></head><body><main class="page"><form method="post" class="card" id="editorForm">
+</style></head><body><?php render_embed_nav(); ?><main class="page"><form method="post" class="card" id="editorForm">
 <header class="header"><h1>Engraving Instructions</h1><p class="muted">Use the visual editor or edit the HTML source.</p></header>
 <?php if ($message): ?><div class="message"><?= htmlspecialchars($message, ENT_QUOTES, 'UTF-8') ?></div><?php endif; ?>
 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['engraving_csrf'], ENT_QUOTES, 'UTF-8') ?>"><input type="hidden" name="content_html" id="contentHtml">

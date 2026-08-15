@@ -3,6 +3,7 @@ require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/connect.php';
 start_session_once();
 require_https();
+send_embed_headers();
 redirect_if_no_shopify_context();
 
 $hw_token = $_GET['hw_token'] ?? '';
@@ -44,6 +45,7 @@ $currentData = array_slice($data, $offset, $limit);
     <meta charset="utf-8">
     <title>RHHJ Custom Product Options Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <?php render_embed_head(); ?>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap');
 
@@ -143,6 +145,8 @@ $currentData = array_slice($data, $offset, $limit);
     width: calc(100% - 70px);
     justify-content: space-between;
     gap: 20px;
+    position: relative;
+    z-index: 2;
 }
 
 .product-title {
@@ -256,6 +260,7 @@ a.btn.install-btn + a {
 </head>
 
 <body>
+    <?php render_embed_nav(); ?>
     <div class="dashboard-wrapper-header">
         <h2 class="dashboard-title">Products Dashboard</h2>
 		<div>
@@ -293,7 +298,7 @@ a.btn.install-btn + a {
 							$productId = basename($p['id']);
 							$previewurl = $p['onlineStorePreviewUrl'];?>
                             <div class="product-card">
-                                <a class="product-card-link" href="/singleproduct.php?previewurl=<?= $previewurl ?>&productId=<?= $productId ?>&shop=<?= urlencode($shop) ?>"></a>
+                                <a class="product-card-link" href="singleproduct.php?previewurl=<?= htmlspecialchars($previewurl, ENT_QUOTES, 'UTF-8') ?>&productId=<?= $productId ?>&shop=<?= urlencode($shop) ?>"></a>
 
                                 <?php if (!empty($p['media']['nodes'][0]['preview']['image']['url'])): ?>
                                     <div class="product-image">

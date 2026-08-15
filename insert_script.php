@@ -4,6 +4,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/connect.php';
 start_session_once();
 require_https();
+send_embed_headers();
 redirect_if_no_shopify_context();
 
 $hw_token = $_GET['hw_token'] ?? '';
@@ -190,6 +191,7 @@ if ($currentTheme) {
 
 <head>
     <title>Inster Script In Theme</title>
+    <?php render_embed_head(); ?>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap');
 
@@ -306,6 +308,7 @@ if ($currentTheme) {
 </head>
 
 <body>
+    <?php render_embed_nav(); ?>
     <?php include 'navigation.php'; ?>
     <div class="container">
         <h1>Shopify Theme Script Manager</h1>

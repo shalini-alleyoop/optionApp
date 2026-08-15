@@ -29,4 +29,6 @@ $installUrl = "https://{$shop}/admin/oauth/authorize?{$query}";
 
 $_SESSION['shop'] = $shop;
 
-redirect_to($installUrl);
+// OAuth must run in the top window. Shopify admin cannot be framed
+// (frame-ancestors 'none'), so a normal Location redirect from the app iframe fails.
+redirect_to_top($installUrl);
