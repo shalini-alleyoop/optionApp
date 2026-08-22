@@ -995,6 +995,40 @@ class Admin extends DB
         $slug = '/' . $product['handle'] . '/';
         $this->query("INSERT INTO bg_products SET `shopify_product_id` = '$shopify_product_id',`name` = '$name',`price` = '$price',`slug` = '$slug'");
     }
+
+    function ensure_bg_product($shopRow, $shopifyProductId)
+    {
+        $shopifyProductId = (int)$shopifyProductId;
+        if ($shopifyProductId <= 0 || empty($shopRow['shop_domain']) || empty($shopRow['access_token'])) {
+            return null;
+        }
+
+        $existing = $this->get_row("SELECT * FROM bg_products WHERE shopify_product_id='" . $shopifyProductId . "' LIMIT 1");
+        if ($existing) {
+            return $existing;
+        }
+
+        $url = 'https://' . $shopRow['shop_domain'] . '/admin/api/' . SHOPIFY_API_VERSION . '/products/' . $shopifyProductId . '.json';
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'X-Shopify-Access-Token: ' . $shopRow['access_token'],
+        ]);
+        $response = curl_exec($ch);
+        curl_close($ch);
+        $data = json_decode((string)$response, true);
+        $product = $data['product'] ?? null;
+        if (!$product) {
+            return null;
+        }
+
+        $name = $this->escape((string)($product['title'] ?? 'Untitled'));
+        $price = $this->escape((string)($product['variants'][0]['price'] ?? '0'));
+        $handle = $this->escape((string)($product['handle'] ?? ''));
+        $this->query("INSERT INTO bg_products SET shopify_product_id = '$shopifyProductId', name = '$name', price = '$price', slug = '/$handle/'");
+        return $this->get_row("SELECT * FROM bg_products WHERE shopify_product_id='" . $shopifyProductId . "' LIMIT 1");
+    }
     function get_product_rules($productId)
     {
         if (!isset($productId)) {

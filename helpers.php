@@ -19,8 +19,20 @@ function start_session_once(): void {
     }
 }
 
+function request_is_https(): bool {
+    if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+        return true;
+    }
+    // ngrok / Cloudflare / load balancers terminate TLS and forward HTTP to Apache
+    $forwarded = strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''));
+    if (str_starts_with($forwarded, 'https')) {
+        return true;
+    }
+    return !empty($_SERVER['HTTP_X_FORWARDED_SSL']) && $_SERVER['HTTP_X_FORWARDED_SSL'] !== 'off';
+}
+
 function require_https(): void {
-    if (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS'] === 'off') {
+    if (!request_is_https()) {
         http_response_code(400);
         exit('HTTPS is required by Shopify.');
     }
@@ -87,6 +99,55 @@ function shopify_request(string $shop, string $method, string $path, ?string $ac
     return ['status' => $status, 'error' => null, 'body' => $decoded, 'raw' => $response];
 }
 
+function shopify_admin_app_url(?string $shop = null): string {
+    $shop = normalize_shop_domain($shop ?: SHOPIFY_ALLOWED_SHOP);
+    $handle = preg_replace('/\.myshopify\.com$/', '', $shop);
+    return 'https://admin.shopify.com/store/' . $handle . '/apps/' . SHOPIFY_API_KEY;
+}
+
+function send_embed_headers(): void {
+    $shop = SHOPIFY_ALLOWED_SHOP;
+    header("Content-Security-Policy: frame-ancestors https://{$shop} https://admin.shopify.com;");
+}
+
+function app_base_path(): string {
+    return rtrim((string)(parse_url(APP_URL, PHP_URL_PATH) ?: ''), '/');
+}
+
+function embed_query(array $extra = []): string {
+    $params = [];
+    if (!empty($_GET['shop'])) {
+        $params['shop'] = normalize_shop_domain((string)$_GET['shop']);
+    } elseif (!empty($_SESSION['shop'])) {
+        $params['shop'] = (string)$_SESSION['shop'];
+    }
+    if (!empty($_GET['host'])) {
+        $params['host'] = (string)$_GET['host'];
+    }
+    $params = array_merge($params, $extra);
+    return $params ? ('?' . http_build_query($params)) : '';
+}
+
+function render_embed_head(): void {
+    echo '<meta name="shopify-api-key" content="' . htmlspecialchars(SHOPIFY_API_KEY, ENT_QUOTES, 'UTF-8') . '">' . "\n";
+    echo '<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>' . "\n";
+}
+
+function render_embed_nav(): void {
+    $base = app_base_path();
+    $q = embed_query();
+    $h = static function (string $url): string {
+        return htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
+    };
+    echo '<ui-nav-menu>';
+    echo '<a href="' . $h($base . '/dashboard.php' . $q) . '" rel="home">Products</a>';
+    echo '<a href="' . $h($base . '/custom-order.php' . $q) . '">Custom Order</a>';
+    echo '<a href="' . $h($base . '/alloptions.php' . $q) . '">All Options</a>';
+    echo '<a href="' . $h($base . '/insert_script.php' . $q) . '">Insert Script</a>';
+    echo '<a href="' . $h($base . '/engraving-editor.php' . $q) . '">Engraving Instructions</a>';
+    echo '</ui-nav-menu>';
+}
+
 function redirect_to(string $url): never {
     header('Location: ' . $url, true, 302);
     exit;
@@ -98,18 +159,20 @@ function redirect_to(string $url): never {
  * iframe a plain Location header causes "refused to connect" errors.
  */
 function redirect_to_top(string $url): never {
-    $u = json_encode($url, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
+    $dest = strtolower((string)($_SERVER['HTTP_SEC_FETCH_DEST'] ?? ''));
+    // Already a top-level tab (OAuth callback, typed URL) — use a normal HTTP redirect.
+    if ($dest !== 'iframe') {
+        redirect_to($url);
+    }
+
     $h = htmlspecialchars($url, ENT_QUOTES, 'UTF-8');
     http_response_code(200);
     header('Content-Type: text/html; charset=utf-8');
-    // Navigate the top-level window if we have one (same-origin or not).
-    // If the assignment throws (rare sandbox / cross-origin edge cases),
-    // show a link instead of redirecting the current frame -- redirecting
-    // the iframe itself to admin.shopify.com causes "refused to connect".
-    echo "<!doctype html><meta charset=\"utf-8\"><title>Redirecting…</title>";
-    echo "<script>(function(){var u={$u};try{(window.top||window).location.href=u;}catch(e){document.body.innerHTML='<p style=\"font-family:sans-serif;padding:30px;\">Please open this app from your Shopify admin. <a href=\"'+u+'\" target=\"_top\">Continue in Shopify admin</a>.</p>';}})();</script>";
-    echo "<noscript><meta http-equiv=\"refresh\" content=\"0;url={$h}\"></noscript>";
-    echo "<p style=\"font-family:sans-serif;padding:30px;\">Redirecting… <a href=\"{$h}\" target=\"_top\">Continue in Shopify admin</a>.</p>";
+    // From inside Shopify's iframe, admin.shopify.com cannot be loaded in the
+    // frame. Click a target=_top link so the whole browser tab navigates.
+    echo '<!doctype html><meta charset="utf-8"><title>Redirecting…</title>';
+    echo '<p style="font-family:sans-serif;padding:30px;">Redirecting… <a id="continue" href="' . $h . '" target="_top">Continue in Shopify admin</a>.</p>';
+    echo '<script>document.getElementById("continue").click();</script>';
     exit;
 }
 
@@ -159,11 +222,18 @@ function redirect_if_no_shopify_context(): void {
         return;
     }
 
-    // Legacy / header-stripped fallbacks.
+    // Shopify Admin iframe always sends shop= (and usually host=).
+    if (!empty($_GET['shop'])) {
+        $incomingShop = normalize_shop_domain((string)$_GET['shop']);
+        if ($incomingShop === SHOPIFY_ALLOWED_SHOP) {
+            $_SESSION['shop'] = SHOPIFY_ALLOWED_SHOP;
+            return;
+        }
+    }
     if (!empty($_GET['host']))     { $_SESSION['shop'] = SHOPIFY_ALLOWED_SHOP; return; }
     if (!empty($_GET['hw_token'])) return;
     if (!empty($_SESSION['shop'])) return;
 
     // Direct URL typed in browser -> push to Shopify admin app URL.
-    redirect_to_top('https://' . SHOPIFY_ALLOWED_SHOP . '/admin/apps/' . SHOPIFY_API_KEY);
+    redirect_to_top(shopify_admin_app_url());
 }

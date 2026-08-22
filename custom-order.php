@@ -3,6 +3,7 @@ require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/connect.php';
 start_session_once();
 require_https();
+send_embed_headers();
 redirect_if_no_shopify_context();
 
 if (empty($_SESSION['custom_order_csrf'])) {
@@ -51,6 +52,7 @@ $boot = [
     <meta charset="utf-8">
     <title><?= $boot['product'] ? htmlspecialchars($boot['product']['title'] . ' — Custom Order') : 'Custom Order' ?></title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <?php render_embed_head(); ?>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap');
         * { font-family: "Montserrat", sans-serif; box-sizing: border-box; }
@@ -136,6 +138,7 @@ $boot = [
     </style>
 </head>
 <body>
+    <?php render_embed_nav(); ?>
     <div class="nav-bar">
         <a href="dashboard.php?shop=<?= urlencode($shop) ?>" class="back-button">← Back</a>
     </div>
